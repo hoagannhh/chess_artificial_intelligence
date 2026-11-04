@@ -1,0 +1,15 @@
+; Open this file with Godot 4.
+config_version=5
+
+[application]
+config/name="Robot Chess"
+run/main_scene="res://scenes/main.tscn"
+
+[display]
+window/size/viewport_width=1280
+window/size/viewport_height=800
+window/stretch/mode="canvas_items"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.025, 0.04, 0.07, 1)

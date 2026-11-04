@@ -1,0 +1,1 @@
+"""legacy pygame package."""

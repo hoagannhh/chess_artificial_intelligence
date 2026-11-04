@@ -1,0 +1,11 @@
+# Frontend — Godot
+
+Import `project.godot` bằng Godot 4.5.1 hoặc phiên bản Godot 4 tương thích.
+
+Khi chạy bằng editor: mở BE bằng `python -m backend` từ thư mục gốc, rồi F5. FE mặc định kết nối `127.0.0.1:8765`; có thể nhận `--bridge-port=PORT` qua user arguments.
+
+Chạy cả app bằng `run.bat` ở gốc để launcher tự chọn cổng, mở FE và dọn server khi đóng game.
+
+FE quản lý camera, hiển thị quân, đánh dấu nước đi, nhận thao tác và animation. Danh sách nước hợp lệ và trạng thái ván do BE cung cấp qua HTTP. FE không import mã Python và không tự quyết định kết quả ván.
+
+Hiện model robot được giữ nguyên trong lần tách kiến trúc này. Thay bằng quân cờ truyền thống là bước giao diện tiếp theo.

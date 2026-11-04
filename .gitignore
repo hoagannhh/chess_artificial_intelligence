@@ -1,0 +1,9 @@
+.godot/
+builds/
+*.tmp
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.local/
+.tools/
