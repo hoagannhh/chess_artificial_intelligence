@@ -1,12 +1,14 @@
 config_version=5
 
 [application]
-config/name="Robot Chess - Orbital 3D"
+config/name="Chess Studio - Local 3D"
 run/main_scene="res://main.tscn"
 
 [display]
 window/size/viewport_width=1280
 window/size/viewport_height=820
+window/size/window_width_override=1280
+window/size/window_height_override=820
 window/stretch/mode="canvas_items"
 
 [rendering]

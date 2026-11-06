@@ -23,7 +23,7 @@ Launcher tự mở backend, chạy Godot và đóng backend khi thoát game.
 | **docs/** | Hướng dẫn, hợp đồng API và lộ trình |
 | **archive/** | Các bản thử cũ và tài nguyên của chúng; không phải app chính |
 
-Các mục kỹ thuật có dấu chấm không cần sửa khi phát triển tính năng: `.venv/` là môi trường Python, `.tools/` chứa Godot portable, `.local/` chứa ảnh kiểm tra sinh tự động, `.git/` là lịch sử Git.
+Các mục kỹ thuật có dấu chấm không cần sửa khi phát triển tính năng: `.venv/` là môi trường Python, `.tools/` chứa Godot portable, `.local/` chứa ván tự lưu và ảnh kiểm tra, `.git/` là lịch sử Git.
 
 Thư mục gốc chỉ giữ `app.py` (launcher), `run.bat` (mở app), `requirements.txt` (thư viện) và README cùng các file cấu hình.
 
@@ -35,7 +35,7 @@ BE, chạy từ thư mục gốc:
 .\.venv\Scripts\python.exe -m backend --port 8765
 ```
 
-FE: mở **frontend/project.godot** trong Godot rồi nhấn F5. FE kết nối backend ở cổng 8765; nhấn Reconnect nếu cần. Khởi động lại BE sẽ tạo ván mới vì chưa có lưu ván.
+FE: mở **frontend/project.godot** trong Godot rồi nhấn F5. FE kết nối backend ở cổng 8765; nhấn Reconnect nếu cần. Khởi động lại BE sẽ khôi phục ván tự lưu trong `.local/saves/current.json`.
 
 - [Hướng dẫn giao diện 3D](docs/GODOT_3D.md)
 - [Hợp đồng API](docs/API.md)
@@ -61,6 +61,7 @@ BE không cần Pygame:
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_domain.py" -v
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_bridge.py" -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_lifecycle.py" -v
 .\.venv\Scripts\python.exe tests/godot_smoke.py
 ```
 
@@ -73,4 +74,14 @@ Muốn chạy toàn bộ test, gồm UI cũ, cài `archive/pygame/requirements.t
 
 ## Phạm vi hiện tại
 
-Bộ luật sử dụng thư viện `chess`; AI sẽ tự triển khai sau. Lần sắp xếp này không thay đổi cách chơi hoặc model. Mục tiêu giao diện tiếp theo là quân cờ truyền thống dễ nhận diện. Model 3D đang dùng vẫn là bộ robot ghép khối.
+- Quân cờ truyền thống 3D: vua, hậu, tượng, mã, xe, tốt; hai màu ngà và xanh đen.
+- Hai người cùng máy; gợi ý nước hợp lệ, nước vừa đi, cảnh báo chiếu, phong cấp đủ bốn lựa chọn.
+- Lịch sử SAN, hoàn tác, chơi lại có xác nhận, đầu hàng, hòa theo thỏa thuận và yêu cầu hòa theo luật.
+- Thông báo kết quả khi hết ván; vẫn xem được bàn cờ và hoàn tác để phân tích.
+- Tự lưu sau mỗi thao tác, tự khôi phục khi mở lại. **New Game** thay thế ván đang lưu sau khi xác nhận.
+- **Export PGN** lưu ván ra file để xem bằng phần mềm cờ khác. Chưa nhập PGN.
+- Xoay, zoom, đảo hướng và đặt lại camera.
+
+Bộ luật sử dụng thư viện `chess`. Hiện là bản chơi local không giới hạn thời gian; AI, đồng hồ thi đấu và chơi online chưa triển khai. Chỉ chạy một phiên app tại một thời điểm vì dùng chung file tự lưu.
+
+Nếu file lưu hỏng, app báo lỗi và giữ nguyên file; chọn New Game sẽ lưu bản hỏng thành `current.invalid.json` trước khi tạo ván mới.

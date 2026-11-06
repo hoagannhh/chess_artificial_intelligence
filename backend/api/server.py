@@ -4,8 +4,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from backend.application.session import Session
 
 
-def make_server(port=8765):
-    session = Session()
+def make_server(port=8765, save_path=None):
+    session = Session(save_path)
 
     class Handler(BaseHTTPRequestHandler):
         def send_json(self, status, data):
@@ -23,19 +23,22 @@ def make_server(port=8765):
                 self.send_json(404, {"error": "Not found"})
 
         def do_POST(self):
-            # The native client sends no Origin. Reject browser-origin mutations.
-            if self.headers.get("Origin") or self.path != "/action":
-                self.send_json(403, {"error": "Forbidden"})
-                return
             try:
+                self.connection.settimeout(5)
                 size = int(self.headers.get("Content-Length", "0"))
                 if not 0 < size <= 4096:
                     raise ValueError("Invalid body size")
-                data = json.loads(self.rfile.read(size))
+                payload = self.rfile.read(size)
+                # Drain the bounded body before closing: Windows may otherwise
+                # reset the connection before the client receives the response.
+                if self.headers.get("Origin") or self.path != "/action":
+                    self.send_json(403, {"error": "Forbidden"})
+                    return
+                data = json.loads(payload)
                 if not isinstance(data, dict):
                     raise ValueError("Expected object")
                 self.send_json(200, session.action(data))
-            except (ValueError, TypeError) as error:
+            except (ValueError, TypeError, OSError) as error:
                 self.send_json(400, {"error": str(error)})
 
         def log_message(self, *args):

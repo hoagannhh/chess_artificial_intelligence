@@ -8,4 +8,4 @@ Chạy cả app bằng `run.bat` ở gốc để launcher tự chọn cổng, m�
 
 FE quản lý camera, hiển thị quân, đánh dấu nước đi, nhận thao tác và animation. Danh sách nước hợp lệ và trạng thái ván do BE cung cấp qua HTTP. FE không import mã Python và không tự quyết định kết quả ván.
 
-Hiện model robot được giữ nguyên trong lần tách kiến trúc này. Thay bằng quân cờ truyền thống là bước giao diện tiếp theo.
+Bộ quân truyền thống tạo bằng mesh trong `chess_piece.gd`. `arena.gd` quản lý bàn cờ, camera, hộp thoại kết quả/đầu hàng/hòa và xuất PGN. Không cần tải model bên ngoài.

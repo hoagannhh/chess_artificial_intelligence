@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import threading
 from backend.api.server import make_server
+from backend.application.storage import DEFAULT_SAVE
 
 ROOT = Path(__file__).resolve().parent
 
@@ -18,7 +19,7 @@ def main():
     engine = args.godot or os.environ.get("GODOT_EXE") or shutil.which("godot") or (str(candidates[0]) if candidates else None)
     if not engine:
         parser.error('Godot not found. Use --godot "C:/path/to/Godot.exe"')
-    server = make_server(0)
+    server = make_server(0, save_path=DEFAULT_SAVE)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:

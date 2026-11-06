@@ -14,10 +14,12 @@ class Game:
         self.board = chess.Board()
         self.history = []
         self.claimed_draw = False
+        self.resigned = None
+        self.agreed_draw = False
 
     @property
     def finished(self):
-        return self.claimed_draw or self.board.is_game_over()
+        return self.claimed_draw or self.resigned is not None or self.agreed_draw or self.board.is_game_over()
 
     def moves_from(self, square):
         if self.finished:
@@ -33,7 +35,10 @@ class Game:
         return True
 
     def undo(self):
-        if self.claimed_draw:
+        if self.resigned is not None or self.agreed_draw:
+            self.resigned = None
+            self.agreed_draw = False
+        elif self.claimed_draw:
             self.claimed_draw = False
         elif self.board.move_stack:
             self.board.pop()
@@ -46,12 +51,33 @@ class Game:
         return False
 
     def status(self):
+        if self.resigned is not None:
+            return ("BLACK WINS" if self.resigned else "WHITE WINS"), "Resignation"
+        if self.agreed_draw:
+            return "DRAW", "Agreement between both players"
         if self.claimed_draw:
             return "DRAW CLAIMED", "Repetition / fifty-move rule"
         outcome = self.board.outcome()
         if outcome:
             title = "DRAW" if outcome.winner is None else (
-                "CYAN WINS" if outcome.winner else "ORANGE WINS")
+                "WHITE WINS" if outcome.winner else "BLACK WINS")
             return title, outcome.termination.name.replace("_", " ").title()
-        side = "CYAN" if self.board.turn else "ORANGE"
-        return f"{side} TO MOVE", "CHECK - protect your king!" if self.board.is_check() else "Select a unit, then its destination"
+        side = "WHITE" if self.board.turn else "BLACK"
+        return f"{side} TO MOVE", "CHECK - protect your king!" if self.board.is_check() else "Select a piece, then its destination"
+
+    def resign(self):
+        if self.finished:
+            raise ValueError("Game already finished")
+        self.resigned = self.board.turn
+
+    def agree_draw(self):
+        if self.finished:
+            raise ValueError("Game already finished")
+        self.agreed_draw = True
+
+    def result(self):
+        if self.resigned is not None:
+            return "0-1" if self.resigned else "1-0"
+        if self.claimed_draw or self.agreed_draw:
+            return "1/2-1/2"
+        return self.board.result()

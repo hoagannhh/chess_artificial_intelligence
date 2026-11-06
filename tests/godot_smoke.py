@@ -26,6 +26,7 @@ try:
     assert result.returncode == 0
     assert 'BRIDGE_OK pieces=32 legal=20' in result.stdout
     assert 'GODOT_FLOW_OK' in result.stdout
+    assert 'CAMERA_OK' in result.stdout
     assert 'SCRIPT ERROR' not in result.stderr
     if capture:
         assert 'CAPTURE_OK' in result.stdout

@@ -7,13 +7,14 @@ Chạy từ thư mục gốc repository:
 ```
 
 - `domain/game.py`: trạng thái ván, luật, thực hiện/hoàn tác, kết quả. Dùng thư viện chess.
-- `application/session.py`: lệnh move/undo/reset/claim và snapshot gửi cho FE.
+- `application/session.py`: lệnh move/undo/reset/claim/resign/agree_draw/save/load và snapshot gửi cho FE.
+- `application/storage.py`: lưu JSON nguyên tử, kiểm tra dữ liệu khi khôi phục và tạo PGN.
 - `api/server.py`: HTTP/JSON trên localhost; chuyển request thành lệnh của application.
 - `__main__.py`: điểm chạy BE độc lập.
 - `requirements.txt`: chỉ cần chess, không phụ thuộc Pygame hoặc Godot.
 
-Backend là nơi quyết định nước hợp lệ, lượt chơi và kết quả. API không tin vào vị trí quân do FE tự tính. AI, đồng hồ và lưu ván sẽ bổ sung ở backend sau; hiện chưa triển khai.
+Backend là nơi quyết định nước hợp lệ, lượt chơi và kết quả. API không tin vào vị trí quân do FE tự tính. AI và đồng hồ sẽ bổ sung sau; hiện chưa triển khai.
 
-Backend giữ một ván trong RAM cho mỗi server. Khởi động lại sẽ tạo ván mới. Chỉ phục vụ ứng dụng local, chưa phải dịch vụ multiplayer.
+Backend giữ một ván trong RAM cho mỗi server. Launcher và CLI tự lưu ở `.local/saves/current.json`, khôi phục lịch sử và kết quả khi khởi động lại. Test khởi tạo server không truyền save_path sẽ chỉ dùng RAM. Chỉ phục vụ ứng dụng local, chưa phải dịch vụ multiplayer.
 
 Hợp đồng giao tiếp: `docs/API.md` ở gốc repository.

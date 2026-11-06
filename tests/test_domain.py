@@ -17,7 +17,7 @@ class GameTests(unittest.TestCase):
             self.assertTrue(game.play(chess.Move.from_uci(uci)))
         self.assertTrue(game.finished)
         self.assertEqual(game.history[-1], "Qh4#")
-        self.assertEqual(game.status()[0], "ORANGE WINS")
+        self.assertEqual(game.status()[0], "BLACK WINS")
         game.undo()
         self.assertFalse(game.finished)
         self.assertEqual(len(game.history), 3)
