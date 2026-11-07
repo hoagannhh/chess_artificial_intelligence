@@ -15,12 +15,14 @@
 
 - [ ] Menu thiết lập, đồng hồ tùy chọn và âm thanh.
 - [ ] Nhập PGN, quản lý nhiều ván lưu.
-- [ ] AI tự viết: hàm đánh giá → Minimax → Alpha–Beta.
-- [ ] AI chạy nền, lựa chọn bên và độ khó.
+- [x] AI tự viết: hàm đánh giá → Minimax → Alpha–Beta → PVS; MCTS dùng UCT và rollout giới hạn.
+- [x] AI đấu AI, chọn thuật toán hai bên, giới hạn thời gian và xuất CSV/PGN thử nghiệm.
+- [x] Người đấu AI, chọn màu/thuật toán/Level, khóa lượt và hoàn tác cặp nước.
+- [ ] Cấu hình độ khó nâng cao.
 - [ ] Thực nghiệm so sánh thuật toán và báo cáo môn học.
 
 ## Kiến trúc
 
 `frontend` xử lý hiển thị và thao tác. `backend/domain` quản lý luật và ván; `backend/application` xử lý lệnh, lưu ván và PGN; `backend/api` cung cấp HTTP JSON. Bản Pygame và model robot cũ nằm trong `archive/`. AI tương lai phân tích bản sao bàn cờ ở BE; FE nhận snapshot đã xác nhận.
 
-Phần luật kế thừa từ python-chess cần ghi rõ trong báo cáo. Phần AI sẽ tự triển khai.
+Phần luật kế thừa từ python-chess cần ghi rõ trong báo cáo. Phần AI Minimax/Alpha–Beta được tự triển khai trong `backend/ai/search.py`.

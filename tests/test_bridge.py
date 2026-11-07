@@ -48,6 +48,20 @@ class BridgeTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_captured_trays_follow_captures_en_passant_and_undo(self):
+        session = Session()
+        for move in ['e2e4', 'd7d5', 'e4d5', 'd8d5']:
+            state = session.action({'action': 'move', 'move': move})
+        self.assertEqual(state['captured'], {'white': ['P'], 'black': ['p']})
+        state = session.action({'action': 'undo'})
+        self.assertEqual(state['captured'], {'white': [], 'black': ['p']})
+        session.action({'action': 'reset'})
+        for move in ['e2e4', 'a7a6', 'e4e5', 'd7d5', 'e5d6']:
+            state = session.action({'action': 'move', 'move': move})
+        self.assertEqual(state['captured'], {'white': [], 'black': ['p']})
+        state = session.action({'action': 'undo'})
+        self.assertEqual(state['captured'], {'white': [], 'black': []})
+
 
 if __name__ == '__main__':
     unittest.main()

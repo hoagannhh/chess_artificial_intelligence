@@ -5,7 +5,8 @@ static func material(color: Color, metal: float = 0.0, glow: bool = false) -> St
 	var m := StandardMaterial3D.new()
 	m.albedo_color = color
 	m.metallic = metal
-	m.roughness = 0.3
+	m.roughness = 0.82
+	m.metallic_specular = 0.22
 	if glow:
 		m.emission_enabled = true
 		m.emission = color
@@ -44,8 +45,8 @@ static func ball(parent: Node3D, pos: Vector3, radius: float, mat: Material, str
 static func build(symbol: String, square: int) -> Node3D:
 	var root := Node3D.new()
 	var white := symbol == symbol.to_upper()
-	var body_mat := material(Color("eee5cf") if white else Color("283447"), .16)
-	var trim := material(Color("b89860") if white else Color("6c8fa5"), .72)
+	var body_mat := material(Color("b5babc") if white else Color("45494b"), .0)
+	var trim := material(Color("69747a") if white else Color("737878"), .08)
 	var eye := material(Color("263448") if white else Color("e6cf98"))
 	var kind := symbol.to_upper()
 	var height: float = {"P": .48, "R": .58, "N": .57, "B": .7, "Q": .79, "K": .88}[kind]
@@ -84,12 +85,28 @@ static func build(symbol: String, square: int) -> Node3D:
 			cylinder(root, Vector3(0, .91, 0), .13, .22, body_mat, .25)
 			for i in range(8):
 				var a := i * TAU / 8.0
-				ball(root, Vector3(cos(a) * .21, 1.06, sin(a) * .21), .055, body_mat)
+				ball(root, Vector3(cos(a) * .21, 1.06, sin(a) * .21), .055, trim if white else body_mat)
 			ball(root, Vector3(0, 1.10, 0), .085, trim)
 		"K":
 			ball(root, Vector3(0, 1.01, 0), .16, body_mat, .75)
-			box(root, Vector3(0, 1.24, 0), Vector3(.09, .32, .09), body_mat)
-			box(root, Vector3(0, 1.27, 0), Vector3(.28, .085, .09), body_mat)
+			box(root, Vector3(0, 1.24, 0), Vector3(.09, .32, .09), trim if white else body_mat)
+			box(root, Vector3(0, 1.27, 0), Vector3(.28, .085, .09), trim if white else body_mat)
+	if white:
+		# A thin inverted hull keeps light pieces distinct on both square colors.
+		var edge := StandardMaterial3D.new()
+		edge.albedo_color = Color("505b60")
+		edge.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		edge.cull_mode = BaseMaterial3D.CULL_FRONT
+		edge.grow = true
+		edge.grow_amount = .007
+		for part in root.get_children():
+			if part is MeshInstance3D:
+				var outline := MeshInstance3D.new()
+				outline.mesh = part.mesh
+				outline.transform = part.transform
+				outline.material_override = edge
+				outline.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				root.add_child(outline)
 	var body := StaticBody3D.new()
 	body.set_meta("square", square)
 	var collision := CollisionShape3D.new()

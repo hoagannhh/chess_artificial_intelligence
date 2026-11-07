@@ -13,7 +13,7 @@ Chạy từ thư mục gốc repository:
 - `__main__.py`: điểm chạy BE độc lập.
 - `requirements.txt`: chỉ cần chess, không phụ thuộc Pygame hoặc Godot.
 
-Backend là nơi quyết định nước hợp lệ, lượt chơi và kết quả. API không tin vào vị trí quân do FE tự tính. AI và đồng hồ sẽ bổ sung sau; hiện chưa triển khai.
+Backend là nơi quyết định nước hợp lệ, lượt chơi và kết quả. API không tin vào vị trí quân do FE tự tính. AI Minimax/Alpha–Beta/PVS nằm trong `ai/search.py`, MCTS trong `ai/mcts.py`, chạy tại backend trên bản sao bàn cờ; đồng hồ chưa triển khai.
 
 Backend giữ một ván trong RAM cho mỗi server. Launcher và CLI tự lưu ở `.local/saves/current.json`, khôi phục lịch sử và kết quả khi khởi động lại. Test khởi tạo server không truyền save_path sẽ chỉ dùng RAM. Chỉ phục vụ ứng dụng local, chưa phải dịch vụ multiplayer.
 

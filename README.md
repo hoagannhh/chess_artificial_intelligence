@@ -1,7 +1,7 @@
 # Chess App
 
 Ứng dụng cờ vua: **Godot làm giao diện, Python xử lý luật và ván đấu**.
-Hiện chơi hai người trên cùng máy; chưa có AI.
+Chơi hai người cùng máy hoặc cho Minimax, Alpha–Beta, PVS và MCTS tự đấu.
 
 ## Mở app
 
@@ -52,7 +52,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe app.py --godot "C:/Godot/Godot.exe"
 ```
 
-Máy hiện tại đã có `.venv` và Godot portable trong `.tools/godot`. Không sao chép `.venv` sang máy khác. Môi trường hiện tại còn dùng Python đi kèm runtime ứng dụng; nếu runtime bị thay thế, cần tạo lại môi trường bằng Python riêng.
+Máy hiện tại đã có `.venv` và Godot portable trong `.tools/godot`. Không sao chép `.venv` sang máy khác. Môi trường hiện tại dùng Python 3.12.10 độc lập trong `.tools/python312`, không phụ thuộc runtime Codex. Nếu cần tạo lại: `.\.tools\python312\python.exe -m venv .venv`. Xem phiên bản bằng `python --version` (không có khoảng trắng giữa -- và version).
 
 ## Kiểm thử
 
@@ -82,6 +82,29 @@ Muốn chạy toàn bộ test, gồm UI cũ, cài `archive/pygame/requirements.t
 - **Export PGN** lưu ván ra file để xem bằng phần mềm cờ khác. Chưa nhập PGN.
 - Xoay, zoom, đảo hướng và đặt lại camera.
 
-Bộ luật sử dụng thư viện `chess`. Hiện là bản chơi local không giới hạn thời gian; AI, đồng hồ thi đấu và chơi online chưa triển khai. Chỉ chạy một phiên app tại một thời điểm vì dùng chung file tự lưu.
+Bộ luật sử dụng thư viện `chess`. Hiện là bản chơi local không giới hạn thời gian; AI Minimax, Alpha–Beta, PVS và MCTS đã có; đồng hồ thi đấu và chơi online chưa triển khai. Chỉ chạy một phiên app tại một thời điểm vì dùng chung file tự lưu.
 
 Nếu file lưu hỏng, app báo lỗi và giữ nguyên file; chọn New Game sẽ lưu bản hỏng thành `current.invalid.json` trước khi tạo ván mới.
+
+## Cho AI đấu nhau
+
+1. Chạy `run.bat`. Chọn New Game nếu muốn bắt đầu ván mới; Start AI tiếp tục từ thế cờ hiện tại.
+2. Chọn Play Mode = AI vs AI, rồi chọn thuật toán cho White và Black; có thể chọn cùng thuật toán cho hai bên.
+3. Chọn Level 1–5 (mặc định 3): là độ sâu cho Minimax/Alpha–Beta/PVS; với MCTS là mức rollout 8–40 lượt đơn. Mỗi bên có tối đa khoảng 1 giây tìm kiếm mỗi nước.
+4. Nhấn Start AI. Pause AI dừng sau nước đang tính; One Move chỉ đánh một nước cho bên đến lượt.
+5. Xem độ sâu hoàn thành/yêu cầu, số nút, số lần cắt tỉa, thời gian và điểm đánh giá từ phía Trắng. MCTS hiển thị số mô phỏng, node cây và reward riêng. Cuộn bảng bên phải để xem các nút phía dưới.
+
+Camera vẫn sử dụng được khi AI tính. Để tự đi quân hoặc hoàn tác, Pause rồi chờ nước hiện tại kết thúc. Mở lại app khôi phục ván nhưng không tự khởi động AI.
+
+Chi tiết thuật toán và chạy nhiều ván lấy CSV/PGN: [AI](docs/AI.md).
+
+## Người đấu AI
+
+1. Chạy `run.bat`, chọn **PLAY MODE → Human vs AI**.
+2. Chọn **You play → White / Black**. Camera quay về phía người chơi; chọn Đen thì AI Trắng đi trước.
+3. Chọn thuật toán ở hàng của phía AI và Level. AI tự trả lời sau nước người chơi, không cần nhấn Start mỗi lượt.
+4. Chế độ áp dụng cho thế cờ hiện tại. Chọn **New Game** nếu muốn chơi lại từ đầu.
+
+Trong chế độ này chỉ được đi bên đã chọn, kể cả khi AI tạm dừng. Undo lùi cặp nước khi AI đã trả lời (hoặc lùi một nước khi chưa trả lời), rồi tạm dừng AI. Đi nước khác sẽ bật lại AI; Start AI tiếp tục nếu đang tới lượt máy. Kết quả hòa/đầu hàng thủ công được hủy trước khi hoàn tác nước đi.
+
+Resign và Claim Draw chỉ dùng khi đến lượt người. Agree Draw tắt vì chưa có cơ chế AI chấp nhận đề nghị hòa. Pause dừng sau nước đang tính. Khi mở lại, ván được khôi phục nhưng chế độ mặc định là Human vs Human; chọn lại Human vs AI và màu muốn chơi.

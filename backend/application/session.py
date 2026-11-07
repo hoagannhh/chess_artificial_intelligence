@@ -2,6 +2,7 @@
 from pathlib import Path
 import chess
 from backend.domain.game import Game
+from backend.ai.search import search
 from backend.application.storage import load_game, save_game, export_pgn
 
 
@@ -10,6 +11,7 @@ class Session:
         self.game = Game()
         self.save_path = Path(save_path) if save_path else None
         self.notice = ''
+        self.ai_stats = None
         # A corrupt save is preserved until the player explicitly starts a new game.
         self.save_blocked = False
         if self.save_path and self.save_path.exists():
@@ -23,7 +25,18 @@ class Session:
     def snapshot(self):
         board = self.game.board
         title, detail = self.game.status()
+        # Replay actual captures so promotion and en passant are represented correctly.
+        captured = {'white': [], 'black': []}
+        replay = board.root()
+        for move in board.move_stack:
+            victim = replay.piece_at(move.to_square)
+            if replay.is_en_passant(move):
+                victim = chess.Piece(chess.PAWN, not replay.turn)
+            if victim and not replay.is_castling(move):
+                captured['white' if victim.color else 'black'].append(victim.symbol())
+            replay.push(move)
         return {
+            'captured': captured,
             'pieces': [{'square': square, 'symbol': piece.symbol()} for square, piece in board.piece_map().items()],
             'legal': [m.uci() for m in board.legal_moves] if not self.game.finished else [],
             'turn': 'white' if board.turn else 'black', 'title': title, 'detail': detail,
@@ -31,6 +44,7 @@ class Session:
             'check': board.king(board.turn) if board.is_check() else -1,
             'last': board.peek().uci() if board.move_stack else '',
             'claimable': not self.game.finished and board.can_claim_draw(),
+            'ai_stats': self.ai_stats,
             'result': self.game.result(), 'fen': board.fen(),
             'pgn': export_pgn(self.game), 'notice': self.notice,
             'can_undo': bool(board.move_stack) or self.game.claimed_draw or self.game.resigned is not None or self.game.agreed_draw,
@@ -46,7 +60,25 @@ class Session:
 
     def action(self, data):
         action = data.get('action')
-        if action == 'move':
+        if action == 'ai_move':
+            if self.game.finished:
+                raise ValueError('Game already finished')
+            algorithm = data.get('algorithm', 'alphabeta')
+            depth = data.get('depth', 3)
+            limit = data.get('time_limit_ms', 1000)
+            # Validate options even when a draw can be claimed.
+            result = search(self.game.board, algorithm, depth, limit)
+            side = 'white' if self.game.board.turn else 'black'
+            if self.game.board.can_claim_draw():
+                self.game.claim_draw()
+                result.move = None
+                result.score = None if algorithm == 'mcts' else 0
+                if algorithm == 'mcts':
+                    result.mean_reward = 0.0
+            elif result.move is None or not self.game.play(chess.Move.from_uci(result.move)):
+                raise ValueError('AI could not produce a legal move')
+            self.ai_stats = {**result.to_dict(), 'side': side}
+        elif action == 'move':
             uci = data.get('move', '')
             if not isinstance(uci, str):
                 raise ValueError('Expected move in UCI notation')
@@ -54,7 +86,14 @@ class Session:
             if not self.game.play(move):
                 raise ValueError('Illegal move')
         elif action == 'undo':
-            self.game.undo()
+            count = data.get('count', 1)
+            if type(count) is not int or count not in (1, 2):
+                raise ValueError('Undo count must be 1 or 2')
+            if self.game.claimed_draw or self.game.agreed_draw or self.game.resigned is not None:
+                self.game.undo()
+            else:
+                for _ in range(count):
+                    self.game.undo()
         elif action == 'reset':
             if self.save_blocked and self.save_path.exists():
                 # Keep the unreadable original available for recovery.
@@ -82,5 +121,7 @@ class Session:
             self.save_blocked = False
         else:
             raise ValueError('Unknown action')
+        if action != 'ai_move':
+            self.ai_stats = None
         self.persist()
         return self.snapshot()

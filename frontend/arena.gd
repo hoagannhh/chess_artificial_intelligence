@@ -1,6 +1,8 @@
 extends Node3D
 
+const AI_ALGORITHMS = ["minimax", "alphabeta", "pvs", "mcts"]
 const Piece = preload("res://chess_piece.gd")
+var room := preload("res://room.gd").new()
 var camera := Camera3D.new()
 var pieces := Node3D.new()
 var markers := Node3D.new()
@@ -29,8 +31,22 @@ var export_dialog := FileDialog.new()
 var promotion := AcceptDialog.new()
 var reset_dialog := ConfirmationDialog.new()
 var pending_moves: Array = []
+var play_mode := OptionButton.new()
+var human_side := OptionButton.new()
+var human_row := HBoxContainer.new()
+var ai_rows: Array[HBoxContainer] = []
+var ai_step: Button
+var play_hint := Label.new()
+var ai_running := false
+var ai_delay := 0.0
+var ai_white := OptionButton.new()
+var ai_black := OptionButton.new()
+var ai_depth := SpinBox.new()
+var ai_toggle: Button
+var ai_info := Label.new()
 var smoke := false
 var capture := false
+var capture_black := false
 var smoke_phase := 0
 
 func _ready() -> void:
@@ -39,6 +55,8 @@ func _ready() -> void:
 			endpoint = "http://127.0.0.1:" + arg.get_slice("=", 1)
 		if arg == "--smoke":
 			smoke = true
+		if arg == "--capture-black":
+			capture_black = true
 		if arg == "--capture":
 			capture = true
 	build_world()
@@ -54,11 +72,11 @@ func position_of(square: int) -> Vector3:
 	return Vector3(square % 8 - 3.5, .12, 3.5 - floori(square / 8.0))
 
 func build_world() -> void:
-	var dark := Piece.material(Color("273344"), .15)
-	var silver := Piece.material(Color("b6bdc4"), .08)
-	var cyan := Piece.material(Color("44d6ff"), .2, true)
-	var orange := Piece.material(Color("ff972f"), .2, true)
-	Piece.box(self, Vector3(0, -.25, 0), Vector3(8.7, .6, 8.7), dark)
+	var dark := Piece.material(Color("786b5c"))
+	var frame := Piece.material(Color("625246"))
+	var silver := Piece.material(Color("a39680"))
+	var border := Piece.material(Color("a89575"))
+	Piece.box(self, Vector3(0, -.25, 0), Vector3(8.7, .6, 8.7), frame)
 	for square in range(64):
 		var pos := position_of(square)
 		var row := floori(square / 8.0)
@@ -74,8 +92,8 @@ func build_world() -> void:
 		body.add_child(collision)
 		add_child(body)
 	for edge in [-4.2, 4.2]:
-		Piece.box(self, Vector3(edge, .12, 0), Vector3(.06, .08, 8.25), orange)
-		Piece.box(self, Vector3(0, .12, edge), Vector3(8.25, .08, .06), cyan)
+		Piece.box(self, Vector3(edge, .12, 0), Vector3(.035, .025, 8.25), border)
+		Piece.box(self, Vector3(0, .12, edge), Vector3(8.25, .025, .035), border)
 	for i in range(8):
 		var label := Label3D.new()
 		label.text = "abcdefgh"[i]
@@ -91,36 +109,27 @@ func build_world() -> void:
 		rank_label.font_size = 32
 		rank_label.pixel_size = .008
 		add_child(rank_label)
-	Piece.box(self, Vector3(0, -.75, 0), Vector3(200, .2, 200), Piece.material(Color("080e1b"), .25))
-	# Distant towers establish depth; meshes are original procedural scenery.
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 42
-	for i in range(24):
-		var angle := float(i) * TAU / 24
-		var h := rng.randf_range(2.0, 7.0)
-		var p := Vector3(cos(angle) * 18, h / 2 - .6, sin(angle) * 18)
-		Piece.box(self, p, Vector3(1.3, h, 1.3), dark)
-		Piece.box(self, p + Vector3(0, 0, -.66), Vector3(.04, h * .8, .025), cyan if i % 2 else orange)
+	add_child(room)
 	var environment_node := WorldEnvironment.new()
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color("080e1d")
+	env.background_color = Color("454a4c")
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color("91b3d5")
-	env.ambient_light_energy = .38
+	env.ambient_light_color = Color("e6e3dc")
+	env.ambient_light_energy = .28
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	environment_node.environment = env
 	add_child(environment_node)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-55, -30, 0)
-	sun.light_energy = .7
+	sun.light_energy = .38
 	sun.shadow_enabled = true
 	add_child(sun)
 	for side in [-1, 1]:
 		var lamp := OmniLight3D.new()
 		lamp.position = Vector3(side * 5, 3, 0)
-		lamp.light_color = Color("5ddcff") if side < 0 else Color("ffa351")
-		lamp.light_energy = .45
+		lamp.light_color = Color("ece9e2")
+		lamp.light_energy = .12
 		lamp.omni_range = 12
 		add_child(lamp)
 	add_child(camera)
@@ -200,8 +209,8 @@ func build_ui() -> void:
 	panel.offset_top = 20
 	panel.offset_bottom = -20
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(.035, .065, .10, .96)
-	style.border_color = Color("32596d")
+	style.bg_color = Color("303737")
+	style.border_color = Color("656d68")
 	style.set_border_width_all(1)
 	style.set_corner_radius_all(12)
 	style.content_margin_left = 18
@@ -223,7 +232,7 @@ func build_ui() -> void:
 	title.add_theme_font_size_override("font_size", 25)
 	column.add_child(title)
 	status.text = "CONNECTING..."
-	status.add_theme_color_override("font_color", Color("5bdfff"))
+	status.add_theme_color_override("font_color", Color("cfdbc9"))
 	status.add_theme_font_size_override("font_size", 20)
 	column.add_child(status)
 	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -233,8 +242,68 @@ func build_ui() -> void:
 	log_text.custom_minimum_size.y = 100
 	log_text.scroll_following = true
 	column.add_child(log_text)
+	var ai_title := Label.new()
+	ai_title.text = "PLAY MODE"
+	column.add_child(ai_title)
+	for mode_name in ["Human vs Human", "Human vs AI", "AI vs AI"]:
+		play_mode.add_item(mode_name)
+	column.add_child(play_mode)
+	play_mode.item_selected.connect(func(_index): change_mode())
+	column.add_child(human_row)
+	var human_label := Label.new()
+	human_label.text = "You play"
+	human_row.add_child(human_label)
+	human_side.add_item("White")
+	human_side.add_item("Black")
+	human_side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	human_row.add_child(human_side)
+	human_side.item_selected.connect(func(_index): change_mode())
+	play_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	play_hint.add_theme_font_size_override("font_size", 13)
+	column.add_child(play_hint)
+	for side in ["White", "Black"]:
+		var row := HBoxContainer.new()
+		ai_rows.append(row)
+		column.add_child(row)
+		var label := Label.new()
+		label.text = side
+		label.custom_minimum_size.x = 55
+		row.add_child(label)
+		var choice: OptionButton = ai_white if side == "White" else ai_black
+		choice.add_item("Minimax")
+		choice.add_item("Alpha-Beta")
+		choice.add_item("PVS / NegaScout")
+		choice.add_item("MCTS")
+		choice.select(0 if side == "White" else 1)
+		choice.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(choice)
+	var depth_row := HBoxContainer.new()
+	column.add_child(depth_row)
+	var depth_label := Label.new()
+	depth_label.text = "Level 1-5 (1s / move)"
+	depth_label.tooltip_text = "Minimax / Alpha-Beta / PVS: search depth. MCTS: rollout limit = level x 8 plies."
+	depth_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	depth_row.add_child(depth_label)
+	ai_depth.min_value = 1
+	ai_depth.max_value = 5
+	ai_depth.step = 1
+	ai_depth.value = 3
+	depth_row.add_child(ai_depth)
+	var ai_row := HBoxContainer.new()
+	column.add_child(ai_row)
+	ai_toggle = button(ai_row, "START AI", func():
+		ai_running = not ai_running
+		ai_toggle.text = "PAUSE AI" if ai_running else "START AI")
+	ai_toggle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ai_step = button(ai_row, "ONE MOVE", func():
+		stop_ai()
+		request_ai_move())
+	ai_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ai_info.add_theme_font_size_override("font_size", 12)
+	ai_info.text = "Start from this position. Pause after current move."
+	column.add_child(ai_info)
 	button(column, "NEW GAME", func(): reset_dialog.popup_centered())
-	undo_button = button(column, "UNDO", func(): send_action({"action": "undo"}))
+	undo_button = button(column, "UNDO", undo_player_turn)
 	claim_button = button(column, "CLAIM DRAW", func(): send_action({"action": "claim"}))
 	var ending_row := HBoxContainer.new()
 	column.add_child(ending_row)
@@ -254,9 +323,17 @@ func build_ui() -> void:
 		var view_button := button(views, {1: "WHITE", 2: "BLACK", 3: "TOP"}[view], reset_camera.bind(view))
 		view_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button(column, "RESET CAMERA", reset_camera)
+	var finish_label := Label.new()
+	finish_label.text = "TABLE FINISH"
+	column.add_child(finish_label)
+	var finish_choice := OptionButton.new()
+	finish_choice.add_item("Modern stone / Champagne")
+	finish_choice.add_item("Warm walnut")
+	finish_choice.item_selected.connect(room.set_finish)
+	column.add_child(finish_choice)
 	button(column, "RECONNECT", request_state)
 	var help := Label.new()
-	help.text = "Left click: select / move\nRight drag: orbit | Wheel: zoom\nMiddle / Shift+right drag: pan\n1/2/3: White/Black/Top | R: reset\nEsc: cancel selection\nWhite = ivory / Black = slate"
+	help.text = "Left click: select / move\nRight drag: orbit | Wheel: zoom\nMiddle / Shift+right drag: pan\n1/2/3: White/Black/Top | R: reset\nEsc: cancel selection\nWhite = ivory / Black = charcoal"
 	help.add_theme_font_size_override("font_size", 13)
 	column.add_child(help)
 	notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -291,6 +368,70 @@ func build_ui() -> void:
 	for kind in ["q", "r", "b", "n"]:
 		button(choices, {"q": "Queen", "r": "Rook", "b": "Bishop", "n": "Knight"}[kind], promote.bind(kind))
 
+func human_color() -> String:
+	return "white" if human_side.selected == 0 else "black"
+
+func is_ai_turn() -> bool:
+	return not state.is_empty() and (play_mode.selected == 2 or (play_mode.selected == 1 and state.turn != human_color()))
+
+func change_mode() -> void:
+	stop_ai()
+	selected = -1
+	show_markers()
+	if play_mode.selected == 1:
+		ai_running = true
+		ai_toggle.text = "PAUSE AI"
+		reset_camera(1 if human_side.selected == 0 else 2)
+	ai_delay = .45
+	update_play_controls()
+
+func update_play_controls() -> void:
+	play_mode.disabled = busy
+	human_side.disabled = busy
+	ai_white.disabled = busy
+	ai_black.disabled = busy
+	human_row.visible = play_mode.selected == 1
+	for i in range(ai_rows.size()):
+		ai_rows[i].visible = play_mode.selected == 2 or (play_mode.selected == 1 and i != human_side.selected)
+	ai_toggle.disabled = play_mode.selected == 0 or state.is_empty() or bool(state.get("finished", false))
+	ai_step.disabled = busy or not is_ai_turn() or bool(state.get("finished", false))
+	if play_mode.selected == 0:
+		play_hint.text = "Two players on this computer."
+	elif play_mode.selected == 1:
+		play_hint.text = "You: %s | AI: %s\n%s" % [human_color().to_upper(), "BLACK" if human_side.selected == 0 else "WHITE", "AI turn" if is_ai_turn() else "Your turn"]
+		if not ai_running and not bool(state.get("finished", false)):
+			play_hint.text += " — AI paused"
+	else:
+		play_hint.text = "AI vs AI — Start to continue this position."
+	if not state.is_empty():
+		resign_button.disabled = busy or state.finished or (play_mode.selected == 1 and is_ai_turn())
+		claim_button.disabled = busy or not state.claimable or (play_mode.selected == 1 and is_ai_turn())
+		draw_button.disabled = busy or state.finished or play_mode.selected == 1
+		undo_button.disabled = busy or not state.can_undo
+
+func undo_player_turn() -> void:
+	var count := 1
+	if play_mode.selected == 1 and not state.is_empty() and state.turn == human_color() and state.history.size() >= 2:
+		count = 2
+	send_action({"action": "undo", "count": count})
+
+func stop_ai() -> void:
+	ai_running = false
+	ai_toggle.text = "START AI"
+
+func request_ai_move() -> void:
+	if busy or state.is_empty() or state.finished or not is_ai_turn() or camera_modal_open():
+		return
+	var choice: OptionButton = ai_white if state.turn == "white" else ai_black
+	ai_info.text = str(state.turn).to_upper() + " thinking..."
+	send_action({"action": "ai_move", "algorithm": AI_ALGORITHMS[choice.selected], "depth": int(ai_depth.value), "time_limit_ms": 1000})
+
+func _process(delta: float) -> void:
+	update_play_controls()
+	ai_delay = maxf(0.0, ai_delay - delta)
+	if ai_running and not busy and ai_delay <= 0:
+		request_ai_move()
+
 func request_state() -> void:
 	if busy:
 		return
@@ -301,7 +442,13 @@ func request_state() -> void:
 		detail.text = "Cannot start request. Use run.bat."
 
 func send_action(data: Dictionary) -> void:
+	if play_mode.selected == 1 and data.get("action") in ["move", "reset"]:
+		ai_running = true
+		ai_toggle.text = "PAUSE AI"
+	elif data.get("action") != "ai_move":
+		stop_ai()
 	if busy:
+		notice.text = "Wait for the current move, then try again."
 		return
 	busy = true
 	selected = -1
@@ -309,24 +456,40 @@ func send_action(data: Dictionary) -> void:
 	var error := http.request(endpoint + "/action", ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(data))
 	if error != OK:
 		busy = false
+		stop_ai()
 		detail.text = "Request failed. Please reconnect."
 
 func received(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	busy = false
 	if result != HTTPRequest.RESULT_SUCCESS:
+		stop_ai()
 		status.text = "OFFLINE"
 		detail.text = "Start run.bat or Python bridge, then Reconnect."
 		return
 	var parsed = JSON.parse_string(body.get_string_from_utf8())
 	if not parsed is Dictionary:
+		stop_ai()
 		detail.text = "Invalid server response."
 		return
 	if code != 200:
+		stop_ai()
 		detail.text = str(parsed.get("error", "Request rejected"))
 		return
 	var newly_finished: bool = bool(parsed.finished) and (state.is_empty() or not bool(state.get("finished", false)))
 	var animate: bool = not state.is_empty() and parsed.history.size() == state.history.size() + 1
 	state = parsed
+	ai_delay = .45
+	if state.finished:
+		stop_ai()
+	var stats = state.get("ai_stats")
+	if stats is Dictionary:
+		if stats.algorithm == "mcts":
+			var reward_text := "n/a" if stats.mean_reward == null else "%.3f" % float(stats.mean_reward)
+			ai_info.text = "%s / MCTS\n%d simulations | %d tree nodes\nRollout limit: %d plies\n%.0f ms | tree depth %d\nWhite reward [-1,1]: %s" % [stats.side, stats.iterations, stats.nodes, stats.rollout_limit, stats.elapsed_ms, stats.tree_depth, reward_text]
+		else:
+			ai_info.text = "%s / %s\nDepth %d/%d | %d nodes\n%.0f ms | %d cutoffs\n%d re-searches | White: %.2f%s" % [stats.side, stats.algorithm, stats.depth, stats.requested_depth, stats.nodes, stats.elapsed_ms, stats.cutoffs, stats.researches, float(stats.score) / 100.0, "\nTime limit reached" if stats.timed_out else ""]
+	if not stats is Dictionary:
+		ai_info.text = "Start from this position. Pause after current move."
 	status.text = state.title
 	detail.text = state.detail
 	claim_button.disabled = not state.claimable
@@ -353,6 +516,7 @@ func received(result: int, code: int, _headers: PackedStringArray, body: PackedB
 			piece_node.position = position_of(square_index(str(state.last).substr(0, 2)))
 			var tween := piece_node.create_tween()
 			tween.tween_property(piece_node, "position", destination, .25).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN_OUT)
+	room.update_captured(state.get("captured", {}))
 	show_markers()
 	if smoke:
 		print("BRIDGE_OK pieces=", pieces.get_child_count(), " legal=", state.legal.size())
@@ -398,6 +562,91 @@ func received(result: int, code: int, _headers: PackedStringArray, body: PackedB
 			smoke_phase = 6
 			send_action({"action": "undo"})
 			return
+		elif smoke_phase == 6:
+			play_mode.select(2)
+			ai_depth.value = 1
+			ai_white.select(0)
+			ai_black.select(1)
+			ai_running = true
+			smoke_phase = 7
+			return
+		elif smoke_phase == 7:
+			assert(state.history.size() == 1 and state.ai_stats.algorithm == "minimax")
+			smoke_phase = 8
+			return
+		elif smoke_phase == 8:
+			assert(state.history.size() == 2 and state.ai_stats.algorithm == "alphabeta")
+			ai_white.select(2)
+			ai_black.select(3)
+			smoke_phase = 9
+			return
+		elif smoke_phase == 9:
+			assert(state.history.size() == 3 and state.ai_stats.algorithm == "pvs")
+			smoke_phase = 10
+			return
+		elif smoke_phase == 10:
+			assert(state.history.size() == 4 and state.ai_stats.algorithm == "mcts")
+			stop_ai()
+			print("AI_MATCH_OK minimax/alphabeta/pvs/mcts/autoplay/pause")
+			smoke_phase = 11
+			send_action({"action": "undo"})
+			return
+		elif smoke_phase in [11, 12, 13]:
+			smoke_phase += 1
+			send_action({"action": "undo"})
+			return
+		elif smoke_phase == 14:
+			assert(state.history.is_empty())
+			play_mode.select(1)
+			human_side.select(0)
+			ai_black.select(1)
+			change_mode()
+			smoke_phase = 15
+			select_square(12)
+			select_square(28)
+			return
+		elif smoke_phase == 15:
+			assert(state.history.size() == 1 and is_ai_turn())
+			select_square(52)
+			assert(selected == -1)
+			smoke_phase = 16
+			return
+		elif smoke_phase == 16:
+			assert(state.history.size() == 2 and state.turn == "white")
+			smoke_phase = 17
+			undo_player_turn()
+			return
+		elif smoke_phase == 17:
+			assert(state.history.is_empty() and not ai_running)
+			human_side.select(1)
+			change_mode()
+			smoke_phase = 18
+			return
+		elif smoke_phase == 18:
+			assert(state.history.size() == 1 and state.turn == "black" and not is_ai_turn())
+			var move_text := str(state.legal[0])
+			smoke_phase = 19
+			select_square(square_index(move_text.substr(0, 2)))
+			select_square(square_index(move_text.substr(2, 2)))
+			return
+		elif smoke_phase == 19:
+			assert(state.history.size() == 2 and state.turn == "white")
+			smoke_phase = 20
+			return
+		elif smoke_phase == 20:
+			assert(state.history.size() == 3 and state.turn == "black")
+			smoke_phase = 21
+			undo_player_turn()
+			return
+		elif smoke_phase == 21:
+			assert(state.history.size() == 1 and not ai_running and state.turn == "black")
+			print("HUMAN_AI_OK white/black/turn-lock/auto-reply/undo-pair")
+			play_mode.select(0)
+			change_mode()
+			reset_camera()
+			smoke_phase = 22
+			send_action({"action": "reset"})
+			return
 		else:
 			assert(not state.finished and state.history.is_empty())
 			var export_path := ProjectSettings.globalize_path("res://../.local/output/smoke-game.pgn")
@@ -409,10 +658,12 @@ func received(result: int, code: int, _headers: PackedStringArray, body: PackedB
 				get_tree().quit()
 	if capture:
 		capture = false
+		if capture_black:
+			reset_camera(2)
 		await get_tree().create_timer(0.8).timeout
 		await RenderingServer.frame_post_draw
 		var image := get_viewport().get_texture().get_image()
-		var path := ProjectSettings.globalize_path("res://../.local/output/godot-3d.png")
+		var path := ProjectSettings.globalize_path("res://../.local/output/godot-black-view.png" if capture_black else "res://../.local/output/godot-3d.png")
 		DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 		image.save_png(path)
 		print("CAPTURE_OK ", path)
@@ -424,6 +675,12 @@ func square_name(square: int) -> String:
 func square_index(name_text: String) -> int:
 	return "abcdefgh".find(name_text[0]) + (int(name_text[1]) - 1) * 8
 
+func outline_square(square: int, mat: Material) -> void:
+	var center := position_of(square) + Vector3(0, .025, 0)
+	for edge in [-.45, .45]:
+		Piece.box(markers, center + Vector3(edge, 0, 0), Vector3(.035, .012, .93), mat)
+		Piece.box(markers, center + Vector3(0, 0, edge), Vector3(.93, .012, .035), mat)
+
 func show_markers() -> void:
 	for child in markers.get_children():
 		markers.remove_child(child)
@@ -431,15 +688,15 @@ func show_markers() -> void:
 	if state.is_empty():
 		return
 	if int(state.check) >= 0:
-		Piece.box(markers, position_of(int(state.check)) + Vector3(0, .025, 0), Vector3(.94, .018, .94), Piece.material(Color("c53247")))
+		outline_square(int(state.check), Piece.material(Color("b65c52")))
 	if str(state.last).length() >= 4:
 		var last_mat := Piece.material(Color("546f65"), .0)
 		for name_text in [str(state.last).substr(0, 2), str(state.last).substr(2, 2)]:
-			Piece.box(markers, position_of(square_index(name_text)) + Vector3(0, .005, 0), Vector3(.93, .012, .93), last_mat)
+			outline_square(square_index(name_text), last_mat)
 	if selected < 0:
 		return
-	var mat := Piece.material(Color("43d9ff"), .1, true)
-	Piece.cylinder(markers, position_of(selected) + Vector3(0, .02, 0), .42, .015, mat)
+	var mat := Piece.material(Color("668e79"))
+	outline_square(selected, mat)
 	var seen: Array = []
 	for move in state.legal:
 		if move.substr(0, 2) == square_name(selected):
@@ -449,7 +706,7 @@ func show_markers() -> void:
 				Piece.cylinder(markers, position_of(destination) + Vector3(0, .02, 0), .16, .025, mat)
 
 func select_square(square: int) -> void:
-	if busy or state.is_empty() or state.finished:
+	if busy or state.is_empty() or state.finished or (play_mode.selected == 2 and ai_running) or (play_mode.selected == 1 and is_ai_turn()):
 		return
 	if selected == square:
 		selected = -1
