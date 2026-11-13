@@ -33,6 +33,9 @@ Nguồn engine: https://github.com/godotengine/godot-builds/releases/tag/4.5.1-s
 - Resign: người đến lượt đầu hàng, có xác nhận. Agree Draw: hai người xác nhận đồng ý hòa.
 - Export PGN: chọn vị trí lưu file PGN. Mở lại app tự khôi phục ván đang chơi.
 
+- **New Game** cho chọn tắt đồng hồ hoặc 5, 10, 15 phút mỗi bên. Đồng hồ chạy khi bắt đầu ván và chuyển sau nước hợp lệ. Hết giờ kết thúc ván. Thời gian được lưu khi đi quân và khi thoát game bình thường.
+- Quân bị bắt được xếp bắt đầu từ đầu bàn của người ăn quân. Mỗi đầu bàn có một bộ Hậu, Xe, Tượng, Mã để minh họa các lựa chọn phong cấp. Khi tốt đến hàng cuối, chọn quân trong hộp thoại.
+
 ## Chạy từ Godot Editor
 
 Import `frontend/project.godot`. Trước khi nhấn F5, mở terminal chạy:
@@ -62,4 +65,4 @@ Model 3D được tạo bằng code trong dự án, chưa có độ chi tiết n
 
 Smoke test dùng Godot portable trong `.tools`, khởi tạo ván, chọn e2, đi e4, hoàn tác, đầu hàng, hòa, hoàn tác kết quả và xuất PGN qua HTTP thật. Chế độ capture mở cửa sổ ngắn, ghi `.local/output/godot-3d.png` và thoát. Cần cho phép kết nối localhost trong môi trường chạy kiểm thử.
 
-Chạy `tests/godot_smoke.py --capture --black-view` để chụp góc nhìn Đen ra `.local/output/godot-black-view.png`. Cảnh studio mở không có tường/cửa sổ; decor mecha nằm ngoài vùng bàn cờ và không có collider.
+Chạy `tests/godot_smoke.py --capture --black-view` để chụp góc nhìn Đen ra `.local/output/godot-black-view.png`. Cảnh studio mở giữ tầm nhìn thoáng khi xoay camera.

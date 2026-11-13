@@ -44,4 +44,11 @@ def make_server(port=8765, save_path=None):
         def log_message(self, *args):
             pass
 
-    return HTTPServer(("127.0.0.1", port), Handler)
+    class ChessServer(HTTPServer):
+        def server_close(self):
+            if session.game.clock is not None:
+                session.game.update_clock()
+                session.persist()
+            super().server_close()
+
+    return ChessServer(("127.0.0.1", port), Handler)

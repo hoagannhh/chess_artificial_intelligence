@@ -3,6 +3,10 @@ extends Node3D
 const AI_ALGORITHMS = ["minimax", "alphabeta", "pvs", "mcts"]
 const Piece = preload("res://chess_piece.gd")
 var room := preload("res://room.gd").new()
+var board_frame := SubViewportContainer.new()
+var board_preview := preload("res://board_preview.gd").new()
+var board_viewport := SubViewport.new()
+var board_world := Node3D.new()
 var camera := Camera3D.new()
 var pieces := Node3D.new()
 var markers := Node3D.new()
@@ -12,7 +16,8 @@ var selected: int = -1
 var busy := false
 var yaw := 0.40
 var pitch := 0.82
-var distance := 13.0
+const DEFAULT_CAMERA_DISTANCE := 15.6
+var distance := DEFAULT_CAMERA_DISTANCE
 var camera_pan := Vector3.ZERO
 var camera_drag := 0
 var endpoint := "http://127.0.0.1:8765"
@@ -30,6 +35,11 @@ var draw_dialog := ConfirmationDialog.new()
 var export_dialog := FileDialog.new()
 var promotion := AcceptDialog.new()
 var reset_dialog := ConfirmationDialog.new()
+var clock_choices := OptionButton.new()
+var white_clock := Label.new()
+var black_clock := Label.new()
+var clock_synced_at := 0
+var clock_retry_at := 0
 var pending_moves: Array = []
 var play_mode := OptionButton.new()
 var human_side := OptionButton.new()
@@ -59,10 +69,10 @@ func _ready() -> void:
 			capture_black = true
 		if arg == "--capture":
 			capture = true
-	build_world()
 	build_ui()
-	add_child(pieces)
-	add_child(markers)
+	build_world()
+	board_world.add_child(pieces)
+	board_world.add_child(markers)
 	add_child(http)
 	http.timeout = 5.0
 	http.request_completed.connect(received)
@@ -76,12 +86,12 @@ func build_world() -> void:
 	var frame := Piece.material(Color("625246"))
 	var silver := Piece.material(Color("a39680"))
 	var border := Piece.material(Color("a89575"))
-	Piece.box(self, Vector3(0, -.25, 0), Vector3(8.7, .6, 8.7), frame)
+	Piece.box(board_world, Vector3(0, -.25, 0), Vector3(8.7, .6, 8.7), frame)
 	for square in range(64):
 		var pos := position_of(square)
 		var row := floori(square / 8.0)
 		var mat := silver if (square % 8 + row) % 2 else dark
-		Piece.box(self, pos - Vector3(0, .07, 0), Vector3(.985, .14, .985), mat)
+		Piece.box(board_world, pos - Vector3(0, .07, 0), Vector3(.985, .14, .985), mat)
 		var body := StaticBody3D.new()
 		body.set_meta("square", square)
 		body.position = pos - Vector3(0, .07, 0)
@@ -90,10 +100,10 @@ func build_world() -> void:
 		shape.size = Vector3(1, .14, 1)
 		collision.shape = shape
 		body.add_child(collision)
-		add_child(body)
+		board_world.add_child(body)
 	for edge in [-4.2, 4.2]:
-		Piece.box(self, Vector3(edge, .12, 0), Vector3(.035, .025, 8.25), border)
-		Piece.box(self, Vector3(0, .12, edge), Vector3(8.25, .025, .035), border)
+		Piece.box(board_world, Vector3(edge, .12, 0), Vector3(.035, .025, 8.25), border)
+		Piece.box(board_world, Vector3(0, .12, edge), Vector3(8.25, .025, .035), border)
 	for i in range(8):
 		var label := Label3D.new()
 		label.text = "abcdefgh"[i]
@@ -101,15 +111,15 @@ func build_world() -> void:
 		label.rotation.x = -PI / 2
 		label.font_size = 32
 		label.pixel_size = .008
-		add_child(label)
+		board_world.add_child(label)
 		var rank_label := Label3D.new()
 		rank_label.text = str(i + 1)
 		rank_label.position = Vector3(-4.18, .13, 3.5 - i)
 		rank_label.rotation.x = -PI / 2
 		rank_label.font_size = 32
 		rank_label.pixel_size = .008
-		add_child(rank_label)
-	add_child(room)
+		board_world.add_child(rank_label)
+	board_world.add_child(room)
 	var environment_node := WorldEnvironment.new()
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
@@ -119,33 +129,35 @@ func build_world() -> void:
 	env.ambient_light_energy = .28
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	environment_node.environment = env
-	add_child(environment_node)
+	board_world.add_child(environment_node)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-55, -30, 0)
 	sun.light_energy = .38
 	sun.shadow_enabled = true
-	add_child(sun)
+	board_world.add_child(sun)
 	for side in [-1, 1]:
 		var lamp := OmniLight3D.new()
 		lamp.position = Vector3(side * 5, 3, 0)
 		lamp.light_color = Color("ece9e2")
 		lamp.light_energy = .12
 		lamp.omni_range = 12
-		add_child(lamp)
-	add_child(camera)
+		board_world.add_child(lamp)
+	board_world.add_child(camera)
 	camera.current = true
 	camera.fov = 53
 	update_camera()
 
 func update_camera() -> void:
-	# Offset the target to leave room for the right-side HUD.
-	var target := camera_pan + Vector3(1.65 * cos(yaw), 0, -1.65 * sin(yaw))
+	var target := camera_pan + Vector3(0, -.55, 0)
 	camera.position = target + Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * distance
 	camera.look_at(target)
+	var flipped := cos(yaw) < 0.0
+	board_preview.set_flipped(flipped)
+	room.set_clock_flipped(flipped)
 
 func reset_camera(view: int = 0) -> void:
 	camera_pan = Vector3.ZERO
-	distance = 13.0
+	distance = DEFAULT_CAMERA_DISTANCE
 	yaw = PI if view == 2 else 0.0
 	pitch = 1.55 if view == 3 else .82
 	if view == 0:
@@ -168,8 +180,8 @@ func pan_camera(delta: Vector2) -> void:
 func camera_modal_open() -> bool:
 	return promotion.visible or reset_dialog.visible or resign_dialog.visible or draw_dialog.visible or result_dialog.visible or export_dialog.visible
 
-# Continue an already-started drag over the HUD and always catch its release.
-# Starting a drag is handled by _unhandled_input so UI controls stay usable.
+# Continue an already-started drag across the frame boundary and catch its release.
+# New board gestures start only inside the board frame.
 func _input(event: InputEvent) -> void:
 	if camera_modal_open():
 		camera_drag = 0
@@ -202,12 +214,36 @@ func button(parent: Node, title: String, action: Callable) -> Button:
 func build_ui() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
+	var backdrop := ColorRect.new()
+	backdrop.color = Color("1f2424")
+	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(backdrop)
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var margins := MarginContainer.new()
+	layer.add_child(margins)
+	margins.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side in ["left", "top", "right", "bottom"]:
+		margins.add_theme_constant_override("margin_" + side, 14)
+	var layout := HBoxContainer.new()
+	layout.add_theme_constant_override("separation", 14)
+	margins.add_child(layout)
+	board_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	board_frame.stretch = true
+	board_frame.gui_input.connect(on_board_input)
+	layout.add_child(board_frame)
+	board_viewport.own_world_3d = true
+	board_viewport.msaa_3d = get_viewport().msaa_3d
+	board_frame.add_child(board_viewport)
+	board_viewport.add_child(board_world)
+	var right_column := VBoxContainer.new()
+	right_column.custom_minimum_size.x = 310
+	right_column.add_theme_constant_override("separation", 14)
+	layout.add_child(right_column)
+	var preview_panel := PanelContainer.new()
+	right_column.add_child(preview_panel)
 	var panel := PanelContainer.new()
-	panel.set_anchors_and_offsets_preset(Control.PRESET_RIGHT_WIDE)
-	panel.offset_left = -310
-	panel.offset_right = -20
-	panel.offset_top = 20
-	panel.offset_bottom = -20
+	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right_column.add_child(panel)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color("303737")
 	style.border_color = Color("656d68")
@@ -218,7 +254,27 @@ func build_ui() -> void:
 	style.content_margin_top = 18
 	style.content_margin_bottom = 18
 	panel.add_theme_stylebox_override("panel", style)
-	layer.add_child(panel)
+	preview_panel.add_theme_stylebox_override("panel", style)
+	var preview_column := VBoxContainer.new()
+	preview_panel.add_child(preview_column)
+	var preview_header := HBoxContainer.new()
+	preview_column.add_child(preview_header)
+	var preview_title := Label.new()
+	preview_title.text = "2D BOARD"
+	preview_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	preview_header.add_child(preview_title)
+	status.text = "CONNECTING..."
+	status.add_theme_color_override("font_color", Color("cfdbc9"))
+	status.add_theme_font_size_override("font_size", 14)
+	preview_header.add_child(status)
+	board_preview.custom_minimum_size.y = 252
+	preview_column.add_child(board_preview)
+	var clock_row := HBoxContainer.new()
+	preview_column.add_child(clock_row)
+	for clock_label in [white_clock, black_clock]:
+		clock_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		clock_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		clock_row.add_child(clock_label)
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	panel.add_child(scroll)
@@ -228,13 +284,15 @@ func build_ui() -> void:
 	column.add_theme_constant_override("separation", 8)
 	scroll.add_child(column)
 	var title := Label.new()
-	title.text = "CHESS STUDIO\nLOCAL / 3D"
-	title.add_theme_font_size_override("font_size", 25)
+	title.text = "CHESS STUDIO"
+	title.add_theme_font_size_override("font_size", 22)
 	column.add_child(title)
-	status.text = "CONNECTING..."
-	status.add_theme_color_override("font_color", Color("cfdbc9"))
-	status.add_theme_font_size_override("font_size", 20)
-	column.add_child(status)
+	var game_actions := HBoxContainer.new()
+	column.add_child(game_actions)
+	var new_game := button(game_actions, "NEW GAME", func(): reset_dialog.popup_centered())
+	new_game.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	undo_button = button(game_actions, "UNDO", undo_player_turn)
+	undo_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	detail.custom_minimum_size.y = 44
 	column.add_child(detail)
@@ -302,8 +360,6 @@ func build_ui() -> void:
 	ai_info.add_theme_font_size_override("font_size", 12)
 	ai_info.text = "Start from this position. Pause after current move."
 	column.add_child(ai_info)
-	button(column, "NEW GAME", func(): reset_dialog.popup_centered())
-	undo_button = button(column, "UNDO", undo_player_turn)
 	claim_button = button(column, "CLAIM DRAW", func(): send_action({"action": "claim"}))
 	var ending_row := HBoxContainer.new()
 	column.add_child(ending_row)
@@ -357,10 +413,16 @@ func build_ui() -> void:
 	export_dialog.current_file = "chess-game.pgn"
 	export_dialog.file_selected.connect(export_pgn)
 	layer.add_child(export_dialog)
-	reset_dialog.dialog_text = "Clear the current game and start again?"
-	reset_dialog.confirmed.connect(func(): send_action({"action": "reset"}))
+	reset_dialog.dialog_text = "Start a new game with this time per side?"
 	layer.add_child(reset_dialog)
+	clock_choices.add_item("No clock", 0)
+	for minutes in [5, 10, 15]:
+		clock_choices.add_item("%d minutes per side" % minutes, minutes)
+	reset_dialog.add_child(clock_choices)
+	reset_dialog.confirmed.connect(func():
+		send_action({"action": "reset", "clock_minutes": clock_choices.get_selected_id()}))
 	promotion.title = "Choose promotion"
+	promotion.dialog_text = "Replace your pawn with one of these pieces."
 	layer.add_child(promotion)
 	promotion.get_ok_button().text = "Cancel"
 	var choices := HBoxContainer.new()
@@ -426,7 +488,29 @@ func request_ai_move() -> void:
 	ai_info.text = str(state.turn).to_upper() + " thinking..."
 	send_action({"action": "ai_move", "algorithm": AI_ALGORITHMS[choice.selected], "depth": int(ai_depth.value), "time_limit_ms": 1000})
 
+func update_clock_display() -> void:
+	var clock = state.get("clock")
+	var now := Time.get_ticks_msec()
+	for side in ["white", "black"]:
+		var clock_label := white_clock if side == "white" else black_clock
+		var active: bool = clock is Dictionary and clock.running and state.turn == side
+		var display := "—"
+		if clock is Dictionary:
+			var remaining := int(clock.remaining_ms[side])
+			if active:
+				remaining = maxi(0, remaining - (now - clock_synced_at))
+				if remaining == 0 and not busy and now >= clock_retry_at:
+					clock_retry_at = now + 750
+					request_state()
+			var seconds := ceili(remaining / 1000.0)
+			display = "%02d:%02d" % [seconds / 60, seconds % 60]
+		clock_label.text = "%s  %s" % [side.to_upper(), display]
+		var color := Color("f1dfb3") if active else Color("b2bfba")
+		clock_label.modulate = color
+		room.set_clock_side(side, display, color)
+
 func _process(delta: float) -> void:
+	update_clock_display()
 	update_play_controls()
 	ai_delay = maxf(0.0, ai_delay - delta)
 	if ai_running and not busy and ai_delay <= 0:
@@ -478,9 +562,12 @@ func received(result: int, code: int, _headers: PackedStringArray, body: PackedB
 	var newly_finished: bool = bool(parsed.finished) and (state.is_empty() or not bool(state.get("finished", false)))
 	var animate: bool = not state.is_empty() and parsed.history.size() == state.history.size() + 1
 	state = parsed
+	clock_synced_at = Time.get_ticks_msec()
 	ai_delay = .45
 	if state.finished:
 		stop_ai()
+		promotion.hide()
+		pending_moves.clear()
 	var stats = state.get("ai_stats")
 	if stats is Dictionary:
 		if stats.algorithm == "mcts":
@@ -529,13 +616,24 @@ func received(result: int, code: int, _headers: PackedStringArray, body: PackedB
 				var screen_point := camera.unproject_position(position_of(28))
 				var ray_origin := camera.project_ray_origin(screen_point)
 				var query := PhysicsRayQueryParameters3D.create(ray_origin, ray_origin + camera.project_ray_normal(screen_point) * 100)
-				var hit := get_world_3d().direct_space_state.intersect_ray(query)
+				var hit := camera.get_world_3d().direct_space_state.intersect_ray(query)
 				assert(not hit.is_empty() and int(hit.collider.get_meta("square", -1)) == 28)
 			reset_camera()
 			print("CAMERA_OK orbit/pan/presets/picking")
 			smoke_phase = 1
-			select_square(12)
-			select_square(28)
+			# Exercise real GUI routing and viewport coordinates, not just selection logic.
+			camera.force_update_transform()
+			for square in [12, 28]:
+				var point := position_of(square) + Vector3.UP * (.4 if square == 12 else 0.0)
+				var click := InputEventMouseButton.new()
+				click.button_index = MOUSE_BUTTON_LEFT
+				click.position = board_frame.get_global_transform_with_canvas() * camera.unproject_position(point)
+				click.pressed = true
+				get_viewport().push_input(click, true)
+				click.pressed = false
+				get_viewport().push_input(click, true)
+				if square == 12:
+					assert(selected == 12, "Board frame click did not select e2")
 			return
 		elif smoke_phase == 1:
 			assert(state.last == "e2e4" and state.turn == "black")
@@ -682,6 +780,7 @@ func outline_square(square: int, mat: Material) -> void:
 		Piece.box(markers, center + Vector3(0, 0, edge), Vector3(.93, .012, .035), mat)
 
 func show_markers() -> void:
+	board_preview.show_position(state, selected)
 	for child in markers.get_children():
 		markers.remove_child(child)
 		child.queue_free()
@@ -734,7 +833,7 @@ func promote(kind: String) -> void:
 			send_action({"action": "move", "move": move})
 			return
 
-func _unhandled_input(event: InputEvent) -> void:
+func on_board_input(event: InputEvent) -> void:
 	if camera_modal_open():
 		return
 	if event is InputEventMouseButton and event.pressed:
@@ -751,9 +850,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_LEFT and camera_drag == 0:
 			var origin := camera.project_ray_origin(event.position)
 			var ray := PhysicsRayQueryParameters3D.create(origin, origin + camera.project_ray_normal(event.position) * 100)
-			var hit := get_world_3d().direct_space_state.intersect_ray(ray)
+			var hit := camera.get_world_3d().direct_space_state.intersect_ray(ray)
 			if not hit.is_empty() and hit.collider.has_meta("square"):
 				select_square(int(hit.collider.get_meta("square")))
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if camera_modal_open():
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_1: reset_camera(1)

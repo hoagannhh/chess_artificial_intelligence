@@ -82,7 +82,7 @@ Muốn chạy toàn bộ test, gồm UI cũ, cài `archive/pygame/requirements.t
 - **Export PGN** lưu ván ra file để xem bằng phần mềm cờ khác. Chưa nhập PGN.
 - Xoay, zoom, đảo hướng và đặt lại camera.
 
-Bộ luật sử dụng thư viện `chess`. Hiện là bản chơi local không giới hạn thời gian; AI Minimax, Alpha–Beta, PVS và MCTS đã có; đồng hồ thi đấu và chơi online chưa triển khai. Chỉ chạy một phiên app tại một thời điểm vì dùng chung file tự lưu.
+Bộ luật sử dụng thư viện `chess`. Bản chơi local có đồng hồ đếm ngược tùy chọn và bốn thuật toán AI: Minimax, Alpha–Beta, PVS và MCTS. Chỉ chạy một phiên app tại một thời điểm vì dùng chung file tự lưu.
 
 Nếu file lưu hỏng, app báo lỗi và giữ nguyên file; chọn New Game sẽ lưu bản hỏng thành `current.invalid.json` trước khi tạo ván mới.
 

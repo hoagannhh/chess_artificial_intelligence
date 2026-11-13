@@ -10,6 +10,6 @@ FE quản lý camera, hiển thị quân, đánh dấu nước đi, nhận thao 
 
 Bộ quân truyền thống tạo bằng mesh trong `chess_piece.gd`. `arena.gd` quản lý bàn cờ, camera, hộp thoại kết quả/đầu hàng/hòa và xuất PGN. Không cần tải model bên ngoài.
 
-`room.gd` dựng bàn đá/gỗ, nền studio mở và khay quân bị bắt. Không có tường hoặc cửa sổ chắn camera. `display_mecha.gd` dựng hai mẫu mecha trang trí trên đế xoay chậm; mỗi phía người chơi một mô hình. `tea_corner.gd` dựng mỗi bên một tách trà, đĩa lót, thìa, đĩa bánh và sổ tay thấp. Cảnh dùng mesh và noise texture sinh trong project, không cần asset ngoài. Màu quân và ánh sáng chính giữ theo bản đã điều chỉnh để dễ đọc.
+`room.gd` dựng bàn đá/gỗ, nền studio mở và khay quân bị bắt. Không có tường hoặc cửa sổ chắn camera. Cảnh dùng mesh và noise texture sinh trong project, không cần asset ngoài. Màu quân và ánh sáng chính giữ theo bản đã điều chỉnh để dễ đọc.
 
 Table Finish trong bảng điều khiển cho phép chọn Modern stone / Champagne hoặc Warm walnut. Khay quân bị bắt dùng model kích thước 1:1 với quân trên bàn, xếp hai cột trong khay rộng hơn.

@@ -5,6 +5,7 @@ from pathlib import Path
 import chess
 import chess.pgn
 from backend.domain.game import Game
+from backend.domain.clock import ChessClock
 
 DEFAULT_SAVE = Path(__file__).resolve().parents[2] / '.local' / 'saves' / 'current.json'
 
@@ -16,6 +17,8 @@ def save_game(game, path):
                'moves': [m.uci() for m in game.board.move_stack],
                'claimed_draw': game.claimed_draw, 'resigned': game.resigned,
                'agreed_draw': game.agreed_draw}
+    if game.clock:
+        payload['clock'] = game.clock.save_data(game.board.turn)
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(payload, indent=2), encoding='utf-8')
     os.replace(temporary, path)
@@ -51,6 +54,8 @@ def load_game(path):
             if resigned != game.board.turn:
                 raise ValueError('Invalid resigned side')
             game.resign()
+        if 'clock' in data:
+            game.clock = ChessClock.from_save(data['clock'], len(moves), game.board.turn, game.finished)
         return game
     except (KeyError, TypeError, AttributeError) as error:
         raise ValueError('Invalid save format') from error
