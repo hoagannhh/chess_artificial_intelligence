@@ -1,6 +1,7 @@
 extends Node3D
 
-const AI_ALGORITHMS = ["minimax", "alphabeta", "pvs", "mcts"]
+const AI_NAMES = preload("res://experiment_results.gd").AI_NAMES
+const AI_ALGORITHMS = ["minimax", "alphabeta", "pvs", "mcts", "astar_ab", "expectimax", "alphabeta_q"]
 const Piece = preload("res://chess_piece.gd")
 var room := preload("res://room.gd").new()
 var board_frame := SubViewportContainer.new()
@@ -30,6 +31,8 @@ var resign_button: Button
 var draw_button: Button
 var notice := Label.new()
 var result_dialog := AcceptDialog.new()
+var experiments := preload("res://experiment_results.gd").new()
+var experiments_button: Button
 var resign_dialog := ConfirmationDialog.new()
 var draw_dialog := ConfirmationDialog.new()
 var export_dialog := FileDialog.new()
@@ -178,7 +181,7 @@ func pan_camera(delta: Vector2) -> void:
 	update_camera()
 
 func camera_modal_open() -> bool:
-	return promotion.visible or reset_dialog.visible or resign_dialog.visible or draw_dialog.visible or result_dialog.visible or export_dialog.visible
+	return promotion.visible or reset_dialog.visible or resign_dialog.visible or draw_dialog.visible or result_dialog.visible or export_dialog.visible or experiments.visible
 
 # Continue an already-started drag across the frame boundary and catch its release.
 # New board gestures start only inside the board frame.
@@ -293,6 +296,8 @@ func build_ui() -> void:
 	new_game.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	undo_button = button(game_actions, "UNDO", undo_player_turn)
 	undo_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	layer.add_child(experiments)
+	experiments_button = button(column, "KẾT QUẢ THỰC NGHIỆM", func(): experiments.open_results(endpoint))
 	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	detail.custom_minimum_size.y = 44
 	column.add_child(detail)
@@ -328,10 +333,8 @@ func build_ui() -> void:
 		label.custom_minimum_size.x = 55
 		row.add_child(label)
 		var choice: OptionButton = ai_white if side == "White" else ai_black
-		choice.add_item("Minimax")
-		choice.add_item("Alpha-Beta")
-		choice.add_item("PVS / NegaScout")
-		choice.add_item("MCTS")
+		for algorithm in AI_ALGORITHMS:
+			choice.add_item("PVS / NegaScout" if algorithm == "pvs" else AI_NAMES[algorithm])
 		choice.select(0 if side == "White" else 1)
 		choice.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(choice)
@@ -339,7 +342,7 @@ func build_ui() -> void:
 	column.add_child(depth_row)
 	var depth_label := Label.new()
 	depth_label.text = "Level 1-5 (1s / move)"
-	depth_label.tooltip_text = "Minimax / Alpha-Beta / PVS: search depth. MCTS: rollout limit = level x 8 plies."
+	depth_label.tooltip_text = "Search depth in plies. MCTS rollout limit is level × 8 plies."
 	depth_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	depth_row.add_child(depth_label)
 	ai_depth.min_value = 1
@@ -482,7 +485,7 @@ func stop_ai() -> void:
 	ai_toggle.text = "START AI"
 
 func request_ai_move() -> void:
-	if busy or state.is_empty() or state.finished or not is_ai_turn() or camera_modal_open():
+	if busy or state.is_empty() or state.finished or not is_ai_turn() or (camera_modal_open() and not experiments.visible):
 		return
 	var choice: OptionButton = ai_white if state.turn == "white" else ai_black
 	ai_info.text = str(state.turn).to_upper() + " thinking..."
@@ -526,6 +529,8 @@ func request_state() -> void:
 		detail.text = "Cannot start request. Use run.bat."
 
 func send_action(data: Dictionary) -> void:
+	if play_mode.selected == 2 and data.get("action") in ["ai_move", "claim", "resign", "agree_draw"]:
+		data["ai_players"] = [AI_ALGORITHMS[ai_white.selected], AI_ALGORITHMS[ai_black.selected]]
 	if play_mode.selected == 1 and data.get("action") in ["move", "reset"]:
 		ai_running = true
 		ai_toggle.text = "PAUSE AI"
@@ -574,7 +579,11 @@ func received(result: int, code: int, _headers: PackedStringArray, body: PackedB
 			var reward_text := "n/a" if stats.mean_reward == null else "%.3f" % float(stats.mean_reward)
 			ai_info.text = "%s / MCTS\n%d simulations | %d tree nodes\nRollout limit: %d plies\n%.0f ms | tree depth %d\nWhite reward [-1,1]: %s" % [stats.side, stats.iterations, stats.nodes, stats.rollout_limit, stats.elapsed_ms, stats.tree_depth, reward_text]
 		else:
-			ai_info.text = "%s / %s\nDepth %d/%d | %d nodes\n%.0f ms | %d cutoffs\n%d re-searches | White: %.2f%s" % [stats.side, stats.algorithm, stats.depth, stats.requested_depth, stats.nodes, stats.elapsed_ms, stats.cutoffs, stats.researches, float(stats.score) / 100.0, "\nTime limit reached" if stats.timed_out else ""]
+			ai_info.text = "%s / %s\nDepth %d/%d | %d nodes\n%.0f ms | %d cutoffs\n%d re-searches | White: %.2f%s" % [stats.side, AI_NAMES[stats.algorithm], stats.depth, stats.requested_depth, stats.nodes, stats.elapsed_ms, stats.cutoffs, stats.researches, float(stats.score) / 100.0, "\nTime limit reached" if stats.timed_out else ""]
+			if stats.algorithm == "astar_ab":
+				ai_info.text += "\nA* route nodes: %d" % int(stats.route_nodes)
+			elif stats.algorithm == "alphabeta_q":
+				ai_info.text += "\nQuiescence nodes: %d" % int(stats.qnodes)
 	if not stats is Dictionary:
 		ai_info.text = "Start from this position. Pause after current move."
 	status.text = state.title
@@ -584,7 +593,9 @@ func received(result: int, code: int, _headers: PackedStringArray, body: PackedB
 	resign_button.disabled = state.finished
 	draw_button.disabled = state.finished
 	notice.text = state.get("notice", "")
-	if newly_finished and not smoke:
+	if newly_finished and experiments.visible:
+		experiments.refresh(endpoint)
+	elif newly_finished and not smoke:
 		result_dialog.dialog_text = "%s\n%s\nResult: %s" % [state.title, state.detail, state.result]
 		result_dialog.popup_centered(Vector2i(380, 180))
 	log_text.text = "MOVE HISTORY\n\n"
@@ -674,6 +685,30 @@ func received(result: int, code: int, _headers: PackedStringArray, body: PackedB
 			return
 		elif smoke_phase == 8:
 			assert(state.history.size() == 2 and state.ai_stats.algorithm == "alphabeta")
+			smoke_phase = 81
+			send_action({"action": "agree_draw"})
+			return
+		elif smoke_phase == 81:
+			assert(state.finished)
+			experiments.loaded.connect(func():
+				var live: Dictionary = experiments.sources[1]
+				assert(int(live.games) == 1 and int(live.pairs[0].draws) == 1)
+				experiments.selector.select(1)
+				experiments.selector.item_selected.emit(1)
+				assert(experiments.tables.get_child_count() == 4)
+				experiments.tabs.current_tab = 1
+				var game_row := experiments.match_table.get_root().get_first_child()
+				assert(game_row.get_text(2) == "Minimax" and game_row.get_text(3) == "Alpha–Beta")
+				assert(game_row.get_text(4) == "Hòa (½–½)")
+				experiments.hide()
+				print("EXPERIMENT_RESULTS_OK")
+				smoke_phase = 82
+				send_action({"action": "undo"}), CONNECT_ONE_SHOT)
+			experiments_button.pressed.emit()
+			return
+		elif smoke_phase == 82:
+			assert(not state.finished and state.history.size() == 2)
+			ai_running = true
 			ai_white.select(2)
 			ai_black.select(3)
 			smoke_phase = 9
@@ -684,8 +719,32 @@ func received(result: int, code: int, _headers: PackedStringArray, body: PackedB
 			return
 		elif smoke_phase == 10:
 			assert(state.history.size() == 4 and state.ai_stats.algorithm == "mcts")
+			ai_white.select(AI_ALGORITHMS.find("astar_ab"))
+			ai_black.select(AI_ALGORITHMS.find("expectimax"))
+			smoke_phase = 101
+			return
+		elif smoke_phase == 101:
+			assert(state.ai_stats.algorithm == "astar_ab" and state.ai_stats.route_nodes > 0)
+			smoke_phase = 102
+			return
+		elif smoke_phase == 102:
+			assert(state.ai_stats.algorithm == "expectimax")
+			ai_white.select(AI_ALGORITHMS.find("alphabeta_q"))
+			smoke_phase = 103
+			return
+		elif smoke_phase == 103:
+			assert(state.ai_stats.algorithm == "alphabeta_q" and state.ai_stats.qnodes > 0)
 			stop_ai()
-			print("AI_MATCH_OK minimax/alphabeta/pvs/mcts/autoplay/pause")
+			print("AI_MATCH_OK minimax/alphabeta/pvs/mcts/astar_ab/expectimax/alphabeta_q")
+			smoke_phase = 104
+			send_action({"action": "undo", "count": 2})
+			return
+		elif smoke_phase == 104:
+			smoke_phase = 105
+			send_action({"action": "undo"})
+			return
+		elif smoke_phase == 105:
+			assert(state.history.size() == 4)
 			smoke_phase = 11
 			send_action({"action": "undo"})
 			return

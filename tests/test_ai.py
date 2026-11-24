@@ -2,6 +2,7 @@ import unittest
 import random
 from backend.ai.mcts import Node, choose_child, search_mcts
 import chess
+from backend.ai.pawn_routes import promotion_route
 from backend.ai.search import search
 from backend.application.session import Session
 
@@ -23,7 +24,7 @@ class SearchTests(unittest.TestCase):
             board.push_uci(uci)
         before = board.fen()
         stack = list(board.move_stack)
-        for algorithm in ['minimax', 'alphabeta', 'pvs']:
+        for algorithm in ['minimax', 'alphabeta', 'pvs', 'expectimax', 'astar_ab', 'alphabeta_q']:
             result = search(board, algorithm, 2, 2000)
             self.assertEqual(result.move, 'd8h4')
             self.assertLess(result.score, -90000)
@@ -106,12 +107,57 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(result.mean_reward, 0)
 
     def test_new_algorithms_respect_deadline(self):
-        for algorithm in ['pvs', 'mcts']:
+        for algorithm in ['pvs', 'mcts', 'expectimax', 'astar_ab', 'alphabeta_q']:
             board = chess.Board()
             result = search(board, algorithm, 5, 50)
             self.assertIn(chess.Move.from_uci(result.move), board.legal_moves)
             self.assertLess(result.elapsed_ms, 1000)
             self.assertEqual(board.fen(), chess.STARTING_FEN)
+
+    def test_expectimax_averages_replies_for_either_side(self):
+        position = chess.Board('7k/8/2p5/8/3P4/8/8/K7 w - - 0 1')
+        for board in (position, position.mirror()):
+            result = search(board, 'expectimax', 2, 1000)
+            self.assertEqual(result.depth, 2)
+            # Three king moves leave a White advantage of 8, one pawn move makes it 0.
+            self.assertEqual(result.score, 6 if board.turn else -6)
+            self.assertEqual(search(board, 'minimax', 2, 1000).score, 0)
+
+    def test_astar_handles_blocked_attacked_and_capture_routes(self):
+        for fen, expected in [
+            ('7k/8/8/8/8/8/P7/7K w - - 0 1', 5),
+            ('7k/8/8/8/8/R7/P7/7K w - - 0 1', None),
+            ('7r/P7/7k/8/8/8/8/7K w - - 0 1', 2),
+            ('Rn5k/P7/8/8/8/8/8/7K w - - 0 1', 1),
+        ]:
+            position = chess.Board(fen)
+            for board in (position, position.mirror()):
+                with self.subTest(fen=board.fen()):
+                    cost, examined = promotion_route(board, board.turn)
+                    self.assertEqual(cost, expected)
+                    self.assertGreater(examined, 0)
+                    self.assertEqual(promotion_route(board, not board.turn), (None, 0))
+
+    def test_astar_promotion_bonus_changes_leaf_score(self):
+        position = chess.Board('7k/8/8/P7/8/8/8/7K w - - 0 1')
+        for board in (position, position.mirror()):
+            base = search(board, 'alphabeta', 1, 1000)
+            hybrid = search(board, 'astar_ab', 1, 1000)
+            self.assertEqual(hybrid.move, base.move)
+            self.assertEqual(hybrid.score - base.score, 60 if board.turn else -60)
+            self.assertGreater(hybrid.route_nodes, 0)
+
+    def test_quiescence_sees_recapture_beyond_depth_one(self):
+        position = chess.Board('3r3k/3p4/8/8/8/8/8/3Q3K w - - 0 1')
+        for board in (position, position.mirror()):
+            poisoned_capture = 'd1d7' if board.turn else 'd8d2'
+            self.assertEqual(search(board, 'alphabeta', 1, 1000).move, poisoned_capture)
+            result = search(board, 'alphabeta_q', 1, 1000)
+            self.assertEqual(result.depth, 1)
+            self.assertNotEqual(result.move, poisoned_capture)
+            self.assertIn(chess.Move.from_uci(result.move), board.legal_moves)
+            self.assertGreater(result.qnodes, 0)
+            self.assertLessEqual(result.qnodes, result.nodes)
 
     def test_mcts_claimed_draw_reward(self):
         session = Session()

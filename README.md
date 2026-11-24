@@ -1,7 +1,7 @@
 # Chess App
 
 Ứng dụng cờ vua: **Godot làm giao diện, Python xử lý luật và ván đấu**.
-Chơi hai người cùng máy hoặc cho Minimax, Alpha–Beta, PVS và MCTS tự đấu.
+Chơi hai người cùng máy, đấu với máy hoặc cho hai trong bảy AI đấu nhau.
 
 ## Mở app
 
@@ -41,6 +41,7 @@ FE: mở **frontend/project.godot** trong Godot rồi nhấn F5. FE kết nối 
 - [Hợp đồng API](docs/API.md)
 - [Lộ trình](docs/ROADMAP.md)
 - [Backend](backend/README.md)
+- [Chạy thực nghiệm AI](docs/EXPERIMENTS.md)
 
 ## Cài trên máy mới
 
@@ -82,7 +83,7 @@ Muốn chạy toàn bộ test, gồm UI cũ, cài `archive/pygame/requirements.t
 - **Export PGN** lưu ván ra file để xem bằng phần mềm cờ khác. Chưa nhập PGN.
 - Xoay, zoom, đảo hướng và đặt lại camera.
 
-Bộ luật sử dụng thư viện `chess`. Bản chơi local có đồng hồ đếm ngược tùy chọn và bốn thuật toán AI: Minimax, Alpha–Beta, PVS và MCTS. Chỉ chạy một phiên app tại một thời điểm vì dùng chung file tự lưu.
+Bộ luật sử dụng thư viện `chess`. Bản chơi local có đồng hồ đếm ngược tùy chọn và bảy đối thủ AI gồm Minimax, Alpha–Beta, PVS, MCTS, Expectimax, Alpha–Beta + Quiescence và A* + Alpha–Beta. Chỉ chạy một phiên app tại một thời điểm vì dùng chung file tự lưu.
 
 Nếu file lưu hỏng, app báo lỗi và giữ nguyên file; chọn New Game sẽ lưu bản hỏng thành `current.invalid.json` trước khi tạo ván mới.
 
@@ -90,7 +91,7 @@ Nếu file lưu hỏng, app báo lỗi và giữ nguyên file; chọn New Game s
 
 1. Chạy `run.bat`. Chọn New Game nếu muốn bắt đầu ván mới; Start AI tiếp tục từ thế cờ hiện tại.
 2. Chọn Play Mode = AI vs AI, rồi chọn thuật toán cho White và Black; có thể chọn cùng thuật toán cho hai bên.
-3. Chọn Level 1–5 (mặc định 3): là độ sâu cho Minimax/Alpha–Beta/PVS; với MCTS là mức rollout 8–40 lượt đơn. Mỗi bên có tối đa khoảng 1 giây tìm kiếm mỗi nước.
+3. Chọn Level 1–5 (mặc định 3). Với MCTS, mức này quy định giới hạn mô phỏng 8–40 nửa nước. Sáu AI còn lại dùng mức này làm độ sâu tìm kiếm chính. Mỗi bên có khoảng 1 giây tính mỗi nước.
 4. Nhấn Start AI. Pause AI dừng sau nước đang tính; One Move chỉ đánh một nước cho bên đến lượt.
 5. Xem độ sâu hoàn thành/yêu cầu, số nút, số lần cắt tỉa, thời gian và điểm đánh giá từ phía Trắng. MCTS hiển thị số mô phỏng, node cây và reward riêng. Cuộn bảng bên phải để xem các nút phía dưới.
 

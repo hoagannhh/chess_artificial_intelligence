@@ -1,4 +1,4 @@
-"""Minimax, alpha-beta, PVS and MCTS entry point.
+"""Search entry point for the supported chess AIs.
 
 Scores are centipawns from White's perspective. Iterative deepening returns
 only completed depths; timeout before depth one uses a legal fallback move.
@@ -6,11 +6,13 @@ only completed depths; timeout before depth one uses a legal fallback move.
 from dataclasses import asdict, dataclass
 from time import perf_counter
 import chess
+from backend.ai.pawn_routes import promotion_route
 
 VALUES = {chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
           chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 0}
 MATE = 100000
-ALGORITHMS = ('minimax', 'alphabeta', 'pvs', 'mcts')
+ALGORITHMS = ('minimax', 'alphabeta', 'pvs', 'mcts', 'astar_ab', 'expectimax', 'alphabeta_q')
+QUIESCENCE_PLIES = 4
 
 
 def evaluate(board):
@@ -31,7 +33,7 @@ def evaluate(board):
 @dataclass
 class SearchResult:
     move: str | None
-    score: int | None
+    score: int | float | None
     depth: int
     requested_depth: int
     nodes: int
@@ -44,6 +46,8 @@ class SearchResult:
     rollout_limit: int = 0
     tree_depth: int = 0
     mean_reward: float | None = None
+    route_nodes: int = 0
+    qnodes: int = 0
 
     def to_dict(self):
         return asdict(self)
@@ -55,7 +59,7 @@ class SearchTimeout(Exception):
 
 def search(position, algorithm='alphabeta', depth=3, time_limit_ms=1000):
     if algorithm not in ALGORITHMS:
-        raise ValueError('Algorithm must be minimax, alphabeta, pvs or mcts')
+        raise ValueError('Algorithm must be one of: ' + ', '.join(ALGORITHMS))
     if type(depth) is not int or not 1 <= depth <= 5:
         raise ValueError('Depth must be an integer from 1 to 5')
     if type(time_limit_ms) is not int or not 50 <= time_limit_ms <= 2000:
@@ -66,7 +70,21 @@ def search(position, algorithm='alphabeta', depth=3, time_limit_ms=1000):
     board = position.copy(stack=True)
     start = perf_counter()
     deadline = start + time_limit_ms / 1000
-    nodes = cutoffs = researches = 0
+    nodes = cutoffs = researches = route_nodes = qnodes = 0
+    root_color = board.turn
+    pruning = algorithm in ('alphabeta', 'pvs', 'astar_ab', 'alphabeta_q')
+
+    def leaf_score():
+        nonlocal route_nodes
+        score = evaluate(board)
+        if algorithm == 'astar_ab':
+            for color in (chess.WHITE, chess.BLACK):
+                cost, examined = promotion_route(board, color)
+                route_nodes += examined
+                if cost is not None:
+                    bonus = 12 * max(0, 7 - cost)
+                    score += bonus if color else -bonus
+        return score
 
     def terminal(ply):
         outcome = board.outcome()
@@ -76,28 +94,46 @@ def search(position, algorithm='alphabeta', depth=3, time_limit_ms=1000):
             return 0
         return (MATE - ply) * (1 if outcome.winner else -1)
 
-    def ordered():
-        # Both algorithms use identical ordering to make comparisons meaningful.
+    def ordered(moves=None):
         def priority(move):
             victim = board.piece_type_at(move.to_square)
             capture = VALUES.get(victim, 0) + (100 if board.is_en_passant(move) else 0)
             return (-(capture * 10 + VALUES.get(move.promotion, 0)), move.uci())
-        return sorted(board.legal_moves, key=priority)
+        return sorted(board.legal_moves if moves is None else moves, key=priority)
 
     def visit(remaining, alpha, beta, ply):
-        nonlocal nodes, cutoffs, researches
+        nonlocal nodes, cutoffs, researches, qnodes
         if perf_counter() >= deadline:
             raise SearchTimeout
         nodes += 1
+        quiescence = algorithm == 'alphabeta_q' and remaining <= 0
+        if quiescence:
+            qnodes += 1
         end = terminal(ply)
         if end is not None:
             return end, None
-        if remaining == 0:
-            return evaluate(board), None
+        if remaining <= 0 and (not quiescence or remaining <= -QUIESCENCE_PLIES):
+            return leaf_score(), None
         maximizing = board.turn == chess.WHITE
+        chance = algorithm == 'expectimax' and board.turn != root_color
+        total = 0.0
         best = -MATE * 2 if maximizing else MATE * 2
         chosen = None
-        for move in ordered():
+        if quiescence and not board.is_check():
+            # Stand pat unless a capture or promotion improves this position.
+            best = evaluate(board)
+            if maximizing:
+                alpha = max(alpha, best)
+            else:
+                beta = min(beta, best)
+            if alpha >= beta:
+                cutoffs += 1
+                return best, None
+            candidates = ordered(m for m in board.legal_moves if m.promotion or board.is_capture(m))
+        else:
+            # In check every legal evasion matters, including a quiet king move or block.
+            candidates = ordered()
+        for move in candidates:
             board.push(move)
             try:
                 if algorithm == 'pvs' and chosen is not None:
@@ -110,9 +146,12 @@ def search(position, algorithm='alphabeta', depth=3, time_limit_ms=1000):
                     score, _ = visit(remaining - 1, alpha, beta, ply + 1)
             finally:
                 board.pop()
-            if chosen is None or (score > best if maximizing else score < best):
+            if chance:
+                total += score
+                continue
+            if (maximizing and score > best) or (not maximizing and score < best):
                 best, chosen = score, move
-            if algorithm in ('alphabeta', 'pvs'):
+            if pruning:
                 if maximizing:
                     alpha = max(alpha, best)
                 else:
@@ -120,12 +159,14 @@ def search(position, algorithm='alphabeta', depth=3, time_limit_ms=1000):
                 if alpha >= beta:
                     cutoffs += 1
                     break
+        if chance:
+            return total / len(candidates), None
         return best, chosen
 
     end = terminal(0)
     moves = ordered() if end is None else []
     chosen = moves[0] if moves else None
-    score = evaluate(board) if end is None else end
+    score = leaf_score() if end is None else end
     completed = 0
     timed_out = False
     if moves:
@@ -137,4 +178,5 @@ def search(position, algorithm='alphabeta', depth=3, time_limit_ms=1000):
                 break
             chosen, score, completed = move, value, current
     return SearchResult(chosen.uci() if chosen else None, score, completed, depth,
-                        nodes, cutoffs, round((perf_counter() - start) * 1000, 2), timed_out, algorithm, researches=researches)
+                        nodes, cutoffs, round((perf_counter() - start) * 1000, 2), timed_out,
+                        algorithm, researches=researches, route_nodes=route_nodes, qnodes=qnodes)

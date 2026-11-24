@@ -1,6 +1,8 @@
 """Application commands and frontend-neutral snapshots."""
+import csv
 from pathlib import Path
 import chess
+from backend.application.experiments import ExperimentResults, experiment_for_move
 from backend.domain.game import Game
 from backend.domain.clock import CLOCK_MINUTES
 from backend.ai.search import search
@@ -8,17 +10,20 @@ from backend.application.storage import load_game, save_game, export_pgn
 
 
 class Session:
-    def __init__(self, save_path=None):
+    def __init__(self, save_path=None, experiments_root=None):
         self.game = Game()
         self.save_path = Path(save_path) if save_path else None
         self.notice = ''
         self.ai_stats = None
+        self.results = ExperimentResults(experiments_root)
+        self.results_pending = False
         # A corrupt save is preserved until the player explicitly starts a new game.
         self.save_blocked = False
         if self.save_path and self.save_path.exists():
             try:
                 self.game = load_game(self.save_path)
                 self.notice = 'Previous game restored.'
+                self.sync_results()
             except (OSError, ValueError) as error:
                 self.notice = f'Cannot restore save: {error}. New Game enables saving again.'
                 self.save_blocked = True
@@ -61,6 +66,21 @@ class Session:
         return {'minutes': clock.minutes, 'remaining_ms': clock.remaining(self.game.board.turn),
                 'running': clock.started is not None}
 
+    def sync_results(self):
+        try:
+            self.results.reconcile(self.game)
+            self.results_pending = False
+        except (OSError, ValueError, csv.Error) as error:
+            self.results_pending = True
+            self.notice = f'Could not update experiment results: {error}'
+
+    def experiment_report(self):
+        if self.game.update_clock() or self.results_pending:
+            self.persist()
+        if self.results_pending:
+            raise ValueError(self.notice)
+        return self.results.report()
+
     def persist(self):
         if self.save_path and not self.save_blocked:
             try:
@@ -68,11 +88,17 @@ class Session:
                 self.notice = 'Game saved automatically.'
             except OSError as error:
                 self.notice = f'Game is in memory only. Save failed: {error}'
+        if self.results_pending or (self.game.experiment and self.game.finished):
+            self.sync_results()
 
     def action(self, data):
         action = data.get('action')
         if self.game.update_clock():
             self.persist()
+        if self.results_pending and action in ('reset', 'load'):
+            self.sync_results()
+            if self.results_pending:
+                raise ValueError(self.notice)
         if self.game.flagged is not None and action in ('move', 'ai_move', 'claim', 'resign', 'agree_draw'):
             return self.snapshot()
         if action == 'ai_move':
@@ -81,8 +107,10 @@ class Session:
             algorithm = data.get('algorithm', 'alphabeta')
             depth = data.get('depth', 3)
             limit = data.get('time_limit_ms', 1000)
+            context = experiment_for_move(self.game, data.get('ai_players'), algorithm, depth, limit)
             # Validate options even when a draw can be claimed.
             result = search(self.game.board, algorithm, depth, limit)
+            self.game.experiment = context
             if self.game.update_clock():
                 self.persist()
                 return self.snapshot()
@@ -102,17 +130,23 @@ class Session:
             if not isinstance(uci, str):
                 raise ValueError('Expected move in UCI notation')
             move = chess.Move.from_uci(uci)
-            if not self.game.play(move) and self.game.flagged is None:
+            if self.game.play(move):
+                self.game.experiment = None
+            elif self.game.flagged is None:
                 raise ValueError('Illegal move')
         elif action == 'undo':
             count = data.get('count', 1)
             if type(count) is not int or count not in (1, 2):
                 raise ValueError('Undo count must be 1 or 2')
+            if self.game.finished and self.game.experiment:
+                self.results_pending = True
             if self.game.claimed_draw or self.game.agreed_draw or self.game.resigned is not None:
                 self.game.undo()
             else:
                 for _ in range(count):
                     self.game.undo()
+            if self.game.experiment and len(self.game.history) <= self.game.experiment['start_ply']:
+                self.game.experiment = None
         elif action == 'reset':
             minutes = data.get('clock_minutes', 0)
             if type(minutes) is not int or minutes not in CLOCK_MINUTES:
@@ -140,9 +174,14 @@ class Session:
                 raise ValueError('No saved game')
             restored = load_game(self.save_path)
             self.game = restored
+            self.results_pending = True
             self.save_blocked = False
         else:
             raise ValueError('Unknown action')
+        if action in ('claim', 'resign', 'agree_draw') and self.game.experiment:
+            players = [self.game.experiment[k] for k in ('white_algorithm', 'black_algorithm')]
+            if data.get('ai_players') != players:
+                self.game.experiment = None
         if action != 'ai_move':
             self.ai_stats = None
         self.persist()

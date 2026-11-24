@@ -4,6 +4,7 @@ No chess engine / AI is used. Keep rule-library calls here so that a future
 custom rules implementation can replace this adapter without rewriting the UI.
 """
 import chess
+from uuid import uuid4
 from backend.domain.clock import ChessClock, side_name
 
 
@@ -12,6 +13,8 @@ class Game:
         self.reset()
 
     def reset(self, clock_minutes=0):
+        self.game_id = uuid4().hex
+        self.experiment = None
         self.board = chess.Board()
         self.history = []
         self.claimed_draw = False

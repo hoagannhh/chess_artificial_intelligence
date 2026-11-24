@@ -30,6 +30,7 @@ try:
     assert 'GODOT_FLOW_OK' in result.stdout
     assert 'CAMERA_OK' in result.stdout
     assert 'AI_MATCH_OK' in result.stdout
+    assert 'EXPERIMENT_RESULTS_OK' in result.stdout
     assert 'HUMAN_AI_OK' in result.stdout
     assert 'SCRIPT ERROR' not in result.stderr
     if capture:

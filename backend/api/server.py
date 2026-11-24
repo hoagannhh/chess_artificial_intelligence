@@ -1,11 +1,18 @@
 """Local HTTP adapter; no UI dependencies."""
 import json
+import csv
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from backend.application.session import Session
+from backend.application.storage import DEFAULT_SAVE
 
 
-def make_server(port=8765, save_path=None):
-    session = Session(save_path)
+def make_server(port=8765, save_path=None, experiments_root=None):
+    if experiments_root is None and save_path is not None:
+        save = Path(save_path)
+        base = save.parent.parent if save.resolve() == DEFAULT_SAVE else save.parent
+        experiments_root = base / 'experiments'
+    session = Session(save_path, experiments_root)
 
     class Handler(BaseHTTPRequestHandler):
         def send_json(self, status, data):
@@ -19,6 +26,13 @@ def make_server(port=8765, save_path=None):
         def do_GET(self):
             if self.path == "/state":
                 self.send_json(200, session.snapshot())
+            elif self.path == "/experiments":
+                try:
+                    report = session.experiment_report()
+                except (OSError, ValueError, KeyError, csv.Error) as error:
+                    self.send_json(500, {"error": str(error)})
+                    return
+                self.send_json(200, report)
             else:
                 self.send_json(404, {"error": "Not found"})
 
