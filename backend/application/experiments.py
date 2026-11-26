@@ -3,11 +3,12 @@ import csv
 from collections import defaultdict
 from pathlib import Path
 
-from backend.ai.search import ALGORITHMS
+from backend.ai.search import ALGORITHMS, NEURAL_NAMES
 
 
 LIVE_FIELDS = ('game_id', 'white_algorithm', 'black_algorithm', 'result', 'termination',
-               'start_ply', 'plies', 'initial_fen', 'depth', 'time_limit_ms', 'clock_minutes')
+               'start_ply', 'plies', 'initial_fen', 'depth', 'time_limit_ms', 'clock_minutes', 'model_id',
+               'white_model_id', 'black_model_id')
 OUTCOMES = ('1-0', '1/2-1/2', '0-1', '*')
 
 
@@ -58,9 +59,15 @@ class ExperimentResults:
             return {}
         with path.open(encoding='utf-8', newline='') as stream:
             reader = csv.DictReader(stream)
-            if tuple(reader.fieldnames or ()) != LIVE_FIELDS:
+            if tuple(reader.fieldnames or ()) not in (LIVE_FIELDS, LIVE_FIELDS[:-2], LIVE_FIELDS[:-3]):
                 raise ValueError('Invalid interface-games.csv header')
-            return {row['game_id']: row for row in reader}
+            rows = {}
+            for row in reader:
+                for color in ('white', 'black'):
+                    legacy_id = row.get('model_id', '') if row[f'{color}_algorithm'] in NEURAL_NAMES else ''
+                    row.setdefault(f'{color}_model_id', legacy_id)
+                rows[row['game_id']] = row
+            return rows
 
     def reconcile(self, game):
         rows = self.live_rows()
@@ -69,7 +76,7 @@ class ExperimentResults:
             row = dict(context, game_id=game.game_id, result=game.result(), termination=game.status()[1],
                        plies=len(game.history) - context['start_ply'],
                        clock_minutes=game.clock.minutes if game.clock else 0)
-            row = {key: str(row[key]) for key in LIVE_FIELDS}
+            row = {key: str(row.get(key, '')) for key in LIVE_FIELDS}
             if rows.get(game.game_id) == row:
                 return
             rows[game.game_id] = row
@@ -91,6 +98,12 @@ class ExperimentResults:
             games = []
             for number, row in enumerate(rows, start=1):
                 white, black, result = (row[key] for key in ('white_algorithm', 'black_algorithm', 'result'))
+                white_id = row.get('white_model_id', row.get('model_id', ''))
+                black_id = row.get('black_model_id', row.get('model_id', ''))
+                if white in NEURAL_NAMES and white_id:
+                    white = f'{NEURAL_NAMES[white]} [{white_id}]'
+                if black in NEURAL_NAMES and black_id:
+                    black = f'{NEURAL_NAMES[black]} [{black_id}]'
                 if not white or not black or result not in OUTCOMES:
                     raise ValueError('Invalid experiment result')
                 games.append(dict(game_id=row.get('game_id') or str(number), number=number,

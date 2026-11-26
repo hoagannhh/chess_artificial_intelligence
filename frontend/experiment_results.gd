@@ -3,7 +3,8 @@ extends AcceptDialog
 signal loaded
 
 const AI_NAMES := {"minimax": "Minimax", "alphabeta": "Alpha–Beta", "pvs": "PVS", "mcts": "MCTS",
-	"astar_ab": "A* + Alpha–Beta", "expectimax": "Expectimax", "alphabeta_q": "Alpha–Beta + Quiescence"}
+	"astar_ab": "A* + Alpha–Beta", "expectimax": "Expectimax", "alphabeta_q": "Alpha–Beta + Quiescence",
+	"alphazero": "AlphaZero", "alphazero_teacher": "AlphaZero có thầy"}
 const RESULT_LABELS := {"1-0": "Trắng thắng (1–0)", "0-1": "Đen thắng (0–1)", "1/2-1/2": "Hòa (½–½)", "*": "Dở dang (*)"}
 var http := HTTPRequest.new()
 var selector := OptionButton.new()

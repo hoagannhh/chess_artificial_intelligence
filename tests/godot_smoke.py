@@ -17,6 +17,10 @@ command = [str(engine), '--path', str(ROOT / 'frontend')]
 if not capture:
     command += ['--headless', '--quit-after', '1500']
 command += ['--', f'--bridge-port={server.server_port}', '--smoke']
+if '--alphazero' in sys.argv or '--alphazero-both' in sys.argv:
+    command += ['--smoke-az']
+if '--alphazero-both' in sys.argv:
+    command += ['--smoke-az-both']
 if capture:
     command += ['--capture']
     if '--black-view' in sys.argv:
@@ -30,6 +34,10 @@ try:
     assert 'GODOT_FLOW_OK' in result.stdout
     assert 'CAMERA_OK' in result.stdout
     assert 'AI_MATCH_OK' in result.stdout
+    if '--alphazero' in sys.argv or '--alphazero-both' in sys.argv:
+        assert 'ALPHAZERO_OK' in result.stdout
+    if '--alphazero-both' in sys.argv:
+        assert 'ALPHAZERO_BRANCHES_OK' in result.stdout
     assert 'EXPERIMENT_RESULTS_OK' in result.stdout
     assert 'HUMAN_AI_OK' in result.stdout
     assert 'SCRIPT ERROR' not in result.stderr

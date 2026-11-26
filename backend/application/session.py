@@ -5,7 +5,7 @@ import chess
 from backend.application.experiments import ExperimentResults, experiment_for_move
 from backend.domain.game import Game
 from backend.domain.clock import CLOCK_MINUTES
-from backend.ai.search import search
+from backend.ai.search import NEURAL_NAMES, search
 from backend.application.storage import load_game, save_game, export_pgn
 
 
@@ -110,6 +110,16 @@ class Session:
             context = experiment_for_move(self.game, data.get('ai_players'), algorithm, depth, limit)
             # Validate options even when a draw can be claimed.
             result = search(self.game.board, algorithm, depth, limit)
+            if context and result.model_id:
+                context = dict(context)
+                if 'white_model_id' not in context and 'black_model_id' not in context:
+                    for color in ('white', 'black'):
+                        context[f'{color}_model_id'] = context.get('model_id', '') if context[f'{color}_algorithm'] in NEURAL_NAMES else ''
+                field = 'white_model_id' if self.game.board.turn else 'black_model_id'
+                if context.get(field) and context[field] != result.model_id:
+                    context = dict(context, start_ply=len(self.game.history), initial_fen=self.game.board.fen())
+                context[field] = result.model_id
+                context['model_id'] = ','.join(sorted({context[key] for key in ('white_model_id', 'black_model_id') if context.get(key)}))
             self.game.experiment = context
             if self.game.update_clock():
                 self.persist()
@@ -118,8 +128,8 @@ class Session:
             if self.game.board.can_claim_draw():
                 self.game.claim_draw()
                 result.move = None
-                result.score = None if algorithm == 'mcts' else 0
-                if algorithm == 'mcts':
+                result.score = None if algorithm == 'mcts' or algorithm in NEURAL_NAMES else 0
+                if algorithm == 'mcts' or algorithm in NEURAL_NAMES:
                     result.mean_reward = 0.0
             elif result.move is None or not self.game.play(chess.Move.from_uci(result.move)):
                 if self.game.flagged is None:

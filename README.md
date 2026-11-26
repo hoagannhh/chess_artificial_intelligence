@@ -1,7 +1,7 @@
 # Chess App
 
 Ứng dụng cờ vua: **Godot làm giao diện, Python xử lý luật và ván đấu**.
-Chơi hai người cùng máy, đấu với máy hoặc cho hai trong bảy AI đấu nhau.
+Chơi hai người cùng máy, đấu với máy hoặc cho các AI đấu nhau. Có bảy AI tìm kiếm cùng hai nhánh **AlphaZero** và **AlphaZero có thầy**.
 
 ## Mở app
 
@@ -83,7 +83,16 @@ Muốn chạy toàn bộ test, gồm UI cũ, cài `archive/pygame/requirements.t
 - **Export PGN** lưu ván ra file để xem bằng phần mềm cờ khác. Chưa nhập PGN.
 - Xoay, zoom, đảo hướng và đặt lại camera.
 
-Bộ luật sử dụng thư viện `chess`. Bản chơi local có đồng hồ đếm ngược tùy chọn và bảy đối thủ AI gồm Minimax, Alpha–Beta, PVS, MCTS, Expectimax, Alpha–Beta + Quiescence và A* + Alpha–Beta. Chỉ chạy một phiên app tại một thời điểm vì dùng chung file tự lưu.
+Bộ luật sử dụng thư viện `chess`. Bản chơi local có đồng hồ đếm ngược tùy chọn và chín lựa chọn AI. Chỉ chạy một phiên app tại một thời điểm vì dùng chung file tự lưu.
+
+Chạy `run.bat` rồi chọn **AI vs AI** để đấu **AlphaZero** với **AlphaZero có thầy**.
+Hai nhánh mặc định lần lượt nạp `.local/models/alphazero/current.pt` và
+`.local/models/alphazero-teacher-01/current.pt`. Bảng thực nghiệm ghi riêng tên nhánh,
+màu quân và mã checkpoint của mỗi bên.
+
+AlphaZero cần cài thêm PyTorch và tạo model. Có thể học trước từ Alpha–Beta + Quiescence
+rồi tiếp tục tự đấu. Hướng dẫn cài đặt, học từ thầy, tự đấu, tiếp tục huấn luyện
+và đánh giá từng phiên bản nằm trong [hướng dẫn AlphaZero](backend/ai/alphazero/README.md).
 
 Nếu file lưu hỏng, app báo lỗi và giữ nguyên file; chọn New Game sẽ lưu bản hỏng thành `current.invalid.json` trước khi tạo ván mới.
 
@@ -91,13 +100,30 @@ Nếu file lưu hỏng, app báo lỗi và giữ nguyên file; chọn New Game s
 
 1. Chạy `run.bat`. Chọn New Game nếu muốn bắt đầu ván mới; Start AI tiếp tục từ thế cờ hiện tại.
 2. Chọn Play Mode = AI vs AI, rồi chọn thuật toán cho White và Black; có thể chọn cùng thuật toán cho hai bên.
-3. Chọn Level 1–5 (mặc định 3). Với MCTS, mức này quy định giới hạn mô phỏng 8–40 nửa nước. Sáu AI còn lại dùng mức này làm độ sâu tìm kiếm chính. Mỗi bên có khoảng 1 giây tính mỗi nước.
+3. Chọn Level 1–5 (mặc định 3). Với MCTS, mức này quy định giới hạn mô phỏng 8–40 nửa nước. Hai nhánh AlphaZero dùng trần 64–320 lượt tìm kiếm. Sáu AI tìm theo độ sâu dùng mức này làm độ sâu chính. Mỗi bên có khoảng 1 giây tính mỗi nước.
 4. Nhấn Start AI. Pause AI dừng sau nước đang tính; One Move chỉ đánh một nước cho bên đến lượt.
 5. Xem độ sâu hoàn thành/yêu cầu, số nút, số lần cắt tỉa, thời gian và điểm đánh giá từ phía Trắng. MCTS hiển thị số mô phỏng, node cây và reward riêng. Cuộn bảng bên phải để xem các nút phía dưới.
 
 Camera vẫn sử dụng được khi AI tính. Để tự đi quân hoặc hoàn tác, Pause rồi chờ nước hiện tại kết thúc. Mở lại app khôi phục ván nhưng không tự khởi động AI.
 
 Chi tiết thuật toán và chạy nhiều ván lấy CSV/PGN: [AI](docs/AI.md).
+
+Giải đấu terminal lưu cấu hình từ lúc bắt đầu trong `run_config.json`. Khi dừng
+bằng Ctrl+C, các ván đã ghi đầy đủ được giữ lại. Chạy tiếp bằng đúng thư mục cũ:
+
+```powershell
+.\.venv\Scripts\python.exe -m backend.ai.tournament --resume --output .local/experiments/TEN_GIAI_CU
+```
+
+Thêm `--dry-run` để kiểm tra số ván đã lưu và ván tiếp theo mà không đấu hoặc ghi file.
+Ván đang tính khi ngắt sẽ được đấu lại; các ván đã ghi, kể cả ván chạm giới hạn
+`max_plies`, được bỏ qua. Giữ nguyên checkpoint AI trong suốt một giải.
+Giải cũ chưa có `run_config.json` hoặc `metadata.json` cần truyền lại các tham số
+`--algorithms`, `--games-per-pair`, `--depth`, `--time-ms`, `--max-plies` của lệnh gốc
+trong lần tiếp tục đầu tiên (và `--initial-fen` nếu đã dùng thế xuất phát riêng).
+Nếu CSV/PGN bị ghi thiếu hoặc không khớp lịch đấu, chương trình báo lỗi và giữ nguyên dữ liệu.
+Nếu bị tắt cưỡng bức, có thể còn `tournament.lock`; chỉ xóa file khóa sau khi xác nhận
+không còn tiến trình chạy giải đó. Bảng kết quả trên giao diện nhận giải khi hoàn tất.
 
 ## Người đấu AI
 

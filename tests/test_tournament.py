@@ -3,11 +3,15 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from backend.ai.tournament import (
     GameRecord,
     TournamentConfig,
     build_schedule,
+    load_progress,
+    main,
+    play_game,
     run_tournament,
     summarize,
     validate_config,
@@ -18,6 +22,80 @@ MATE_IN_ONE_FOR_BLACK = 'rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq
 
 
 class TournamentTests(unittest.TestCase):
+    def test_resume_after_interrupt_preserves_prefix_and_skips_recorded_limits(self):
+        config = TournamentConfig(('minimax', 'alphabeta'), depth=1,
+                                  time_limit_ms=50, max_plies=1)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / 'run'
+            def interrupt(plan, settings):
+                if plan.game_id == 2:
+                    raise KeyboardInterrupt
+                return play_game(plan, settings)
+            with self.assertRaises(KeyboardInterrupt):
+                run_tournament(config, output, game_runner=interrupt)
+            self.assertFalse((output / 'tournament.lock').exists())
+            prefix = {name: (output / name).read_bytes()
+                      for name in ('games.csv', 'moves.csv', 'game-001.pgn')}
+            records, _ = load_progress(output, config)
+            self.assertEqual(len(records), 1)
+            self.assertTrue(records[0].limit_reached)
+            seen = []
+            def resume_runner(plan, settings):
+                seen.append(plan.game_id)
+                return play_game(plan, settings)
+            result = run_tournament(config, output, resume=True, game_runner=resume_runner)
+            self.assertEqual(seen, [2])
+            self.assertEqual(len(result.records), 2)
+            for name, content in prefix.items():
+                self.assertTrue((output / name).read_bytes().startswith(content))
+            # A completed run can regenerate derived summaries without replaying.
+            again = run_tournament(config, output, resume=True,
+                                   game_runner=lambda *args: self.fail('Replayed a saved game'))
+            self.assertEqual(again.summary, result.summary)
+
+    def test_resume_rejects_changed_config_and_incomplete_csv_without_writes(self):
+        config = TournamentConfig(('minimax', 'alphabeta'), max_plies=1)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / 'run'
+            run_tournament(config, output)
+            changed = TournamentConfig(config.algorithms, max_plies=2)
+            with self.assertRaisesRegex(ValueError, 'configuration differs'):
+                run_tournament(changed, output, resume=True)
+            with (output / 'moves.csv').open('a') as stream:
+                stream.write('3,1')
+            before = {p.name: p.read_bytes() for p in output.iterdir()}
+            with self.assertRaisesRegex(ValueError, 'Incomplete CSV'):
+                run_tournament(config, output, resume=True)
+            self.assertEqual(before, {p.name: p.read_bytes() for p in output.iterdir()})
+
+    def test_cli_resume_loads_saved_config_and_dry_run_is_read_only(self):
+        config = TournamentConfig(('minimax', 'alphabeta'), depth=2, max_plies=1)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / 'run'
+            run_tournament(config, output)
+            before = {p.name: p.read_bytes() for p in output.iterdir()}
+            with patch('sys.argv', ['tournament', '--resume', '--dry-run', '--output', str(output)]):
+                main()
+            self.assertEqual(before, {p.name: p.read_bytes() for p in output.iterdir()})
+
+    def test_legacy_progress_and_claim_draw_stats_are_resumable(self):
+        # 100 halfmoves permits a draw claim before an actual move is played.
+        config = TournamentConfig(('minimax', 'alphabeta'), max_plies=2,
+                                  initial_fen='4k3/8/8/8/8/8/8/R3K3 w - - 100 51')
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / 'run'
+            run_tournament(config, output)
+            (output / 'run_config.json').unlink()
+            (output / 'metadata.json').unlink()
+            records, moves = load_progress(output, config)
+            self.assertEqual([r.plies for r in records], [0, 0])
+            self.assertEqual([r.result for r in records], ['1/2-1/2'] * 2)
+            self.assertEqual(len(moves), 2)
+            with patch('sys.argv', ['tournament', '--resume', '--dry-run', '--output', str(output)]):
+                with self.assertRaises(SystemExit) as raised:
+                    main()
+            self.assertEqual(raised.exception.code, 2)
+
     def test_schedule_covers_each_pair_and_balances_colours(self):
         config = TournamentConfig(('minimax', 'alphabeta', 'pvs'), games_per_pair=2)
         plans = build_schedule(config)

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+from collections import defaultdict
+from contextlib import contextmanager
 import json
 import platform
 import sys
@@ -21,8 +23,9 @@ from pathlib import Path
 from typing import Callable
 
 import chess
+import chess.pgn
 
-from backend.ai.search import ALGORITHMS, SearchResult
+from backend.ai.search import ALGORITHMS, BASE_ALGORITHMS, SearchResult
 from backend.application.session import Session
 
 
@@ -30,7 +33,8 @@ SCHEMA_VERSION = 1
 GAME_COLUMNS = (
     'game_id', 'pairing_id', 'round', 'algorithm_a', 'algorithm_b',
     'white_algorithm', 'black_algorithm', 'result', 'winner', 'finished',
-    'limit_reached', 'plies', 'termination', 'initial_fen', 'pgn_file',
+    'limit_reached', 'plies', 'termination', 'initial_fen', 'pgn_file', 'model_id',
+    'white_model_id', 'black_model_id',
 )
 MOVE_COLUMNS = (
     'game_id', 'pairing_id', 'round', 'white_algorithm', 'black_algorithm', 'ply', 'side',
@@ -92,6 +96,9 @@ class GameRecord:
     termination: str
     initial_fen: str
     pgn_file: str
+    model_id: str = ''
+    white_model_id: str = ''
+    black_model_id: str = ''
 
     def to_row(self) -> dict[str, object]:
         row = asdict(self)
@@ -242,6 +249,9 @@ def play_game(plan: GamePlan, config: TournamentConfig) -> PlayedGame:
         termination=str(state['detail']) if finished else 'Stopped at max_plies',
         initial_fen=config.initial_fen,
         pgn_file=filename,
+        model_id=','.join(sorted({str(row['model_id']) for row in move_rows if row.get('model_id')})),
+        white_model_id=','.join(sorted({str(row['model_id']) for row in move_rows if row.get('model_id') and row['side'] == 'white'})),
+        black_model_id=','.join(sorted({str(row['model_id']) for row in move_rows if row.get('model_id') and row['side'] == 'black'})),
     )
     return PlayedGame(record, move_rows, _label_pgn(str(state['pgn']), plan, finished))
 
@@ -365,16 +375,134 @@ def summarize(
 
 
 def _write_csv(path: Path, columns: tuple[str, ...], rows: list[dict[str, object]]) -> None:
-    with path.open('x', newline='', encoding='utf-8') as handle:
+    temporary = path.with_suffix(path.suffix + '.tmp')
+    with temporary.open('w', newline='', encoding='utf-8') as handle:
         writer = csv.DictWriter(handle, fieldnames=columns, extrasaction='raise')
         writer.writeheader()
         writer.writerows(rows)
+    temporary.replace(path)
 
 
 def _write_json(path: Path, value: object) -> None:
-    with path.open('x', encoding='utf-8') as handle:
+    temporary = path.with_suffix(path.suffix + '.tmp')
+    with temporary.open('w', encoding='utf-8') as handle:
         json.dump(value, handle, ensure_ascii=False, indent=2)
         handle.write('\n')
+    temporary.replace(path)
+
+
+def saved_config(output: Path) -> TournamentConfig | None:
+    for name in ('run_config.json', 'metadata.json'):
+        path = output / name
+        if path.exists():
+            data = json.loads(path.read_text(encoding='utf-8'))['config']
+            values = {field.name: data[field.name] for field in fields(TournamentConfig)}
+            values['algorithms'] = tuple(values['algorithms'])
+            return TournamentConfig(**values)
+    return None
+
+
+def load_progress(output: Path, config: TournamentConfig):
+    """Validate a complete prefix without editing any existing results.
+
+    Legacy runs have no manifest until completion; their configuration must be
+    supplied explicitly. Incomplete/corrupt writes fail closed for manual recovery.
+    Games stopped at max_plies are recorded results and must not be replayed.
+    """
+    previous = saved_config(output)
+    if previous is not None and previous != config:
+        raise ValueError('Resume configuration differs from the saved tournament')
+
+    def read(name, columns):
+        with (output / name).open(encoding='utf-8-sig', newline='') as handle:
+            reader = csv.DictReader(handle)
+            if tuple(reader.fieldnames or ()) != columns:
+                raise ValueError(f'Invalid header: {name}')
+            rows = list(reader)
+            if any(None in row or any(value is None for value in row.values()) for row in rows):
+                raise ValueError(f'Incomplete CSV row: {name}; existing files were not changed')
+            return rows
+
+    raw_games = read('games.csv', GAME_COLUMNS)
+    moves = read('moves.csv', MOVE_COLUMNS)
+    plans = build_schedule(config)
+    if len(raw_games) > len(plans):
+        raise ValueError('Saved games exceed the configured schedule')
+    by_game = defaultdict(list)
+    for row in moves:
+        by_game[int(row['game_id'])].append(row)
+    records = []
+    for plan, raw in zip(plans, raw_games):
+        row = raw.copy()
+        row['round_index'] = row.pop('round')
+        for key in ('game_id', 'pairing_id', 'round_index', 'plies'):
+            row[key] = int(row[key])
+        for key in ('finished', 'limit_reached'):
+            if row[key] not in ('True', 'False'):
+                raise ValueError(f'Invalid boolean in game {plan.game_id}')
+            row[key] = row[key] == 'True'
+        record = GameRecord(**row)
+        if any(getattr(record, key) != value for key, value in asdict(plan).items()):
+            raise ValueError(f'Schedule mismatch at game {plan.game_id}')
+        if (record.initial_fen != config.initial_fen or not 0 <= record.plies <= config.max_plies
+                or record.pgn_file != f'game-{plan.game_id:03d}.pgn'
+                or record.result not in ('1-0', '0-1', '1/2-1/2', '*')
+                or record.finished != (record.result != '*')
+                or record.limit_reached == record.finished
+                or (record.limit_reached and record.plies != config.max_plies)
+                or record.winner != _winner(record.result, record.white_algorithm,
+                                            record.black_algorithm, record.finished)):
+            raise ValueError(f'Invalid saved result/configuration for game {plan.game_id}')
+        with (output / record.pgn_file).open(encoding='utf-8') as handle:
+            game = chess.pgn.read_game(handle)
+        if (game is None or game.errors or game.headers.get('Result') != record.result
+                or game.board().fen() != config.initial_fen
+                or game.headers.get('White') != record.white_algorithm
+                or game.headers.get('Black') != record.black_algorithm):
+            raise ValueError(f'Invalid PGN for game {plan.game_id}')
+        played = list(game.mainline_moves())
+        game_moves = by_game.pop(plan.game_id, [])
+        # A draw claim has search statistics but does not add a move to the PGN.
+        claimed = len(game_moves) == record.plies + 1 and game_moves[-1]['move'] == ''
+        if len(played) != record.plies or len(game_moves) != record.plies + int(claimed):
+            raise ValueError(f'Incomplete move data for game {plan.game_id}')
+        board = game.board()
+        for ply, (move, stats) in enumerate(zip(played + ([None] if claimed else []), game_moves), 1):
+            side = 'white' if board.turn else 'black'
+            if move is None and (record.result != '1/2-1/2' or not board.can_claim_draw()):
+                raise ValueError(f'Invalid draw claim in game {plan.game_id}')
+            if (int(stats['ply']) != ply or stats['move'] != (move.uci() if move else '')
+                    or stats['side'] != side or stats['algorithm'] != getattr(record, f'{side}_algorithm')
+                    or int(stats['requested_depth']) != config.depth
+                    or int(stats['pairing_id']) != plan.pairing_id
+                    or int(stats['round']) != plan.round_index
+                    or stats['white_algorithm'] != plan.white_algorithm
+                    or stats['black_algorithm'] != plan.black_algorithm):
+                raise ValueError(f'Move/configuration mismatch in game {plan.game_id}, ply {ply}')
+            if move is not None:
+                board.push(move)
+        records.append(record)
+    if by_game:
+        raise ValueError('moves.csv contains uncommitted games; existing files were not changed')
+    expected = {record.pgn_file for record in records}
+    if {path.name for path in output.glob('game-*.pgn')} != expected:
+        raise ValueError('PGN files do not match saved games; existing files were not changed')
+    return records, moves
+
+
+@contextmanager
+def _run_lock(output):
+    lock = output / 'tournament.lock'
+    try:
+        handle = lock.open('x')
+    except FileExistsError:
+        raise ValueError('Tournament is locked. Check for another runner before removing tournament.lock.')
+    try:
+        with handle:
+            handle.write('Tournament running\n')
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
 
 
 def _format_cell(value: object) -> str:
@@ -433,7 +561,19 @@ def run_tournament(
     output: Path,
     *,
     game_runner: Callable[[GamePlan, TournamentConfig], PlayedGame] = play_game,
+    resume: bool = False,
 ) -> TournamentResult:
+    validate_config(config)
+    output = Path(output)
+    if not resume:
+        output.mkdir(parents=True, exist_ok=False)
+    elif not output.is_dir():
+        raise ValueError('Resume requires an existing tournament directory')
+    with _run_lock(output):
+        return _run_tournament(config, output, game_runner=game_runner, resume=resume)
+
+
+def _run_tournament(config, output, *, game_runner, resume):
     """Run a full round-robin event and write all artifacts into a new directory.
 
     ``game_runner`` is injectable solely to make aggregation and output behavior easy to
@@ -442,21 +582,22 @@ def run_tournament(
 
     validate_config(config)
     output = Path(output)
-    if output.exists():
-        raise FileExistsError(f'Output already exists: {output}. Choose a new directory.')
-    output.mkdir(parents=True)
     plans = build_schedule(config)
-    records: list[GameRecord] = []
-    move_rows: list[dict[str, object]] = []
+    records, move_rows = load_progress(output, config) if resume else ([], [])
+    _write_json(output / 'run_config.json', {'schema_version': SCHEMA_VERSION, 'config': asdict(config)})
+    print(f'Saved games: {len(records)}/{len(plans)}. '
+          f'Next game: {len(records) + 1 if len(records) < len(plans) else "none (complete)"}', flush=True)
 
     try:
-        with (output / 'games.csv').open('x', newline='', encoding='utf-8') as game_handle, \
-             (output / 'moves.csv').open('x', newline='', encoding='utf-8') as move_handle:
+        mode = 'a' if resume else 'x'
+        with (output / 'games.csv').open(mode, newline='', encoding='utf-8') as game_handle, \
+             (output / 'moves.csv').open(mode, newline='', encoding='utf-8') as move_handle:
             game_writer = csv.DictWriter(game_handle, fieldnames=GAME_COLUMNS, extrasaction='raise')
             move_writer = csv.DictWriter(move_handle, fieldnames=MOVE_COLUMNS, extrasaction='raise')
-            game_writer.writeheader()
-            move_writer.writeheader()
-            for plan in plans:
+            if not resume:
+                game_writer.writeheader()
+                move_writer.writeheader()
+            for plan in plans[len(records):]:
                 played = game_runner(plan, config)
                 record = played.record
                 if record.game_id != plan.game_id:
@@ -465,7 +606,8 @@ def run_tournament(
                 move_writer.writerows(played.move_rows)
                 game_handle.flush()
                 move_handle.flush()
-                (output / record.pgn_file).write_text(played.pgn, encoding='utf-8', newline='\n')
+                with (output / record.pgn_file).open('x', encoding='utf-8', newline='\n') as handle:
+                    handle.write(played.pgn)
                 records.append(record)
                 move_rows.extend(played.move_rows)
                 print(
@@ -512,26 +654,49 @@ def run_tournament(
         _write_report_summary(output / 'report_summary.md', config, summary, head_to_head)
         return TournamentResult(output, records, summary, head_to_head)
     except Exception:
-        # Partial CSV/PGN files are intentionally retained for diagnosis; the caller can
-        # choose a fresh directory after resolving the failure.
+        # Preserve partial files; resume validates their consistency before appending.
         raise
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Run a balanced round-robin tournament between chess AIs.')
-    parser.add_argument('--algorithms', nargs='+', choices=ALGORITHMS, default=list(ALGORITHMS))
-    parser.add_argument('--games-per-pair', type=int, default=2, help='Even number, alternating White/Black.')
-    parser.add_argument('--depth', type=int, default=1, help='Depth for search AIs; rollout level for MCTS.')
-    parser.add_argument('--time-ms', type=int, default=100, help='Search budget per move, 50..2000.')
-    parser.add_argument('--max-plies', type=int, default=80, help='Stop unfinished games after this many half-moves.')
-    parser.add_argument('--initial-fen', default=chess.STARTING_FEN, help='Optional valid non-terminal FEN shared by every game.')
-    parser.add_argument('--output', type=Path, required=True, help='New directory for this run; it must not already exist.')
+    parser.add_argument('--algorithms', nargs='+', choices=ALGORITHMS)
+    parser.add_argument('--games-per-pair', type=int, help='Even number, alternating White/Black; default 2.')
+    parser.add_argument('--depth', type=int, help='Depth for search AIs; default 1.')
+    parser.add_argument('--time-ms', type=int, help='Search budget per move, 50..2000; default 100.')
+    parser.add_argument('--max-plies', type=int, help='Half-move limit; default 80.')
+    parser.add_argument('--initial-fen', help='Optional valid non-terminal FEN shared by every game.')
+    parser.add_argument('--output', type=Path, required=True, help='Tournament directory; must be new unless resuming.')
+    parser.add_argument('--resume', action='store_true', help='Validate saved games and continue the existing schedule.')
+    parser.add_argument('--dry-run', action='store_true', help='Validate and show the next game without writing or playing.')
     args = parser.parse_args()
-    config = TournamentConfig(tuple(args.algorithms), args.games_per_pair, args.depth, args.time_ms, args.max_plies, args.initial_fen)
     try:
-        result = run_tournament(config, args.output)
-    except (ValueError, FileExistsError) as error:
+        previous = saved_config(args.output) if args.resume else None
+        if args.resume and previous is None:
+            required = ('algorithms', 'games_per_pair', 'depth', 'time_ms', 'max_plies')
+            if any(getattr(args, name) is None for name in required):
+                raise ValueError('Legacy run has no saved configuration. Supply --algorithms, '
+                                 '--games-per-pair, --depth, --time-ms and --max-plies from the original command.')
+        defaults = asdict(previous or TournamentConfig(BASE_ALGORITHMS))
+        for key in defaults:
+            value = getattr(args, 'time_ms' if key == 'time_limit_ms' else key)
+            if value is not None:
+                defaults[key] = tuple(value) if key == 'algorithms' else value
+        config = TournamentConfig(**defaults)
+        plans = build_schedule(config)
+        if args.dry_run:
+            records, _ = load_progress(args.output, config) if args.resume else ([], [])
+            print(f'Validated {len(records)}/{len(plans)} saved games; {len(plans) - len(records)} remaining.')
+            if len(records) < len(plans):
+                plan = plans[len(records)]
+                print(f'Next game {plan.game_id}: {plan.white_algorithm} (White) vs {plan.black_algorithm} (Black)')
+            return
+        result = run_tournament(config, args.output, resume=args.resume)
+    except (ValueError, OSError, KeyError, TypeError) as error:
         parser.error(str(error))
+    except KeyboardInterrupt:
+        print('\nStopped. Saved games are retained. Use --resume with the same --output to continue.', flush=True)
+        return
     print(f'\nTournament complete: {len(result.records)} games. Results: {result.output / "report_summary.md"}', flush=True)
 
 

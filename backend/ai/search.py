@@ -11,7 +11,9 @@ from backend.ai.pawn_routes import promotion_route
 VALUES = {chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
           chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 0}
 MATE = 100000
-ALGORITHMS = ('minimax', 'alphabeta', 'pvs', 'mcts', 'astar_ab', 'expectimax', 'alphabeta_q')
+BASE_ALGORITHMS = ('minimax', 'alphabeta', 'pvs', 'mcts', 'astar_ab', 'expectimax', 'alphabeta_q')
+NEURAL_NAMES = {'alphazero': 'AlphaZero', 'alphazero_teacher': 'AlphaZero có thầy'}
+ALGORITHMS = (*BASE_ALGORITHMS, *NEURAL_NAMES)
 QUIESCENCE_PLIES = 4
 
 
@@ -48,6 +50,8 @@ class SearchResult:
     mean_reward: float | None = None
     route_nodes: int = 0
     qnodes: int = 0
+    model_id: str = ''
+    training_method: str = ''
 
     def to_dict(self):
         return asdict(self)
@@ -67,6 +71,12 @@ def search(position, algorithm='alphabeta', depth=3, time_limit_ms=1000):
     if algorithm == 'mcts':
         from backend.ai.mcts import search_mcts
         return search_mcts(position, depth, time_limit_ms)
+    if algorithm in NEURAL_NAMES:
+        try:
+            from backend.ai.alphazero.engine import search_alphazero
+        except ImportError as error:
+            raise ValueError('AlphaZero needs PyTorch. Install backend/ai/alphazero/requirements.txt.') from error
+        return search_alphazero(position, depth, time_limit_ms, algorithm=algorithm)
     board = position.copy(stack=True)
     start = perf_counter()
     deadline = start + time_limit_ms / 1000

@@ -1,7 +1,7 @@
 extends Node3D
 
 const AI_NAMES = preload("res://experiment_results.gd").AI_NAMES
-const AI_ALGORITHMS = ["minimax", "alphabeta", "pvs", "mcts", "astar_ab", "expectimax", "alphabeta_q"]
+const AI_ALGORITHMS = ["minimax", "alphabeta", "pvs", "mcts", "astar_ab", "expectimax", "alphabeta_q", "alphazero", "alphazero_teacher"]
 const Piece = preload("res://chess_piece.gd")
 var room := preload("res://room.gd").new()
 var board_frame := SubViewportContainer.new()
@@ -61,6 +61,7 @@ var smoke := false
 var capture := false
 var capture_black := false
 var smoke_phase := 0
+var smoke_az_id := ""
 
 func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
@@ -342,7 +343,7 @@ func build_ui() -> void:
 	column.add_child(depth_row)
 	var depth_label := Label.new()
 	depth_label.text = "Level 1-5 (1s / move)"
-	depth_label.tooltip_text = "Search depth in plies. MCTS rollout limit is level × 8 plies."
+	depth_label.tooltip_text = "Search depth in plies. MCTS rollout limit is level × 8 plies. AlphaZero uses up to level × 64 simulations."
 	depth_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	depth_row.add_child(depth_label)
 	ai_depth.min_value = 1
@@ -575,7 +576,13 @@ func received(result: int, code: int, _headers: PackedStringArray, body: PackedB
 		pending_moves.clear()
 	var stats = state.get("ai_stats")
 	if stats is Dictionary:
-		if stats.algorithm == "mcts":
+		if stats.algorithm in ["alphazero", "alphazero_teacher"]:
+			ai_info.text = "%s / %s\nModel %s\n%d simulations | %d nodes\n%.0f ms | tree depth %d\nWhite value [-1,1]: %.3f" % [stats.side, AI_NAMES[stats.algorithm], stats.model_id, stats.iterations, stats.nodes, stats.elapsed_ms, stats.tree_depth, float(stats.mean_reward)]
+			if stats.get("training_method", "") == "supervised_teacher":
+				ai_info.text += "\nTrained with Alpha–Beta + Quiescence"
+			elif stats.get("training_method", "") == "teacher_assisted_self_play":
+				ai_info.text += "\nTeacher + self-play training"
+		elif stats.algorithm == "mcts":
 			var reward_text := "n/a" if stats.mean_reward == null else "%.3f" % float(stats.mean_reward)
 			ai_info.text = "%s / MCTS\n%d simulations | %d tree nodes\nRollout limit: %d plies\n%.0f ms | tree depth %d\nWhite reward [-1,1]: %s" % [stats.side, stats.iterations, stats.nodes, stats.rollout_limit, stats.elapsed_ms, stats.tree_depth, reward_text]
 		else:
@@ -734,6 +741,10 @@ func received(result: int, code: int, _headers: PackedStringArray, body: PackedB
 			return
 		elif smoke_phase == 103:
 			assert(state.ai_stats.algorithm == "alphabeta_q" and state.ai_stats.qnodes > 0)
+			if OS.get_cmdline_user_args().has("--smoke-az"):
+				ai_black.select(AI_ALGORITHMS.find("alphazero"))
+				smoke_phase = 106
+				return
 			stop_ai()
 			print("AI_MATCH_OK minimax/alphabeta/pvs/mcts/astar_ab/expectimax/alphabeta_q")
 			smoke_phase = 104
@@ -741,6 +752,33 @@ func received(result: int, code: int, _headers: PackedStringArray, body: PackedB
 			return
 		elif smoke_phase == 104:
 			smoke_phase = 105
+			send_action({"action": "undo", "count": 2 if OS.get_cmdline_user_args().has("--smoke-az") else 1})
+			return
+		elif smoke_phase == 106:
+			assert(state.history.size() == 8 and state.ai_stats.algorithm == "alphazero")
+			assert(state.ai_stats.model_id.length() == 12 and state.ai_stats.iterations > 0)
+			print("ALPHAZERO_OK model loaded, neural search applied")
+			if OS.get_cmdline_user_args().has("--smoke-az-both"):
+				smoke_az_id = state.ai_stats.model_id
+				ai_white.select(AI_ALGORITHMS.find("alphazero_teacher"))
+				smoke_phase = 107
+				return
+			print("AI_MATCH_OK all eight engines")
+			stop_ai()
+			smoke_phase = 104
+			send_action({"action": "undo", "count": 2})
+			return
+		elif smoke_phase == 107:
+			assert(state.history.size() == 9 and state.ai_stats.algorithm == "alphazero_teacher")
+			assert(state.ai_stats.model_id.length() == 12 and state.ai_stats.model_id != smoke_az_id)
+			print("ALPHAZERO_BRANCHES_OK independent checkpoints")
+			print("AI_MATCH_OK all nine engines")
+			stop_ai()
+			smoke_phase = 108
+			send_action({"action": "undo", "count": 2})
+			return
+		elif smoke_phase == 108:
+			smoke_phase = 104
 			send_action({"action": "undo"})
 			return
 		elif smoke_phase == 105:
